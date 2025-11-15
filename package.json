@@ -1,12 +1,13 @@
 {
-  "name": "softban-bot",
+  "name": "bloxandco-security-bot",
   "version": "1.0.0",
   "main": "server.js",
+  "license": "MIT",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "discord.js": "^14.16.3",
-    "express": "^4.21.2"
+    "express": "^4.19.2"
   }
 }
