@@ -1,191 +1,298 @@
 // ============================
-// EXPRESS KEEP-ALIVE SERVER
+// SECURITY BOT – FULL MODERATION SUITE
 // ============================
-const express = require("express");
-const app = express();
-const PORT = process.env.PORT || 3000;
 
-app.get("/", (req, res) => {
-  res.send("🛡️ Blox & Co Security Bot is running!");
-});
-
-app.listen(PORT, () =>
-  console.log(`🌐 Web server running on port ${PORT}`)
-);
-
-// ============================
-// DISCORD SECURITY BOT
-// ============================
 const {
   Client,
   GatewayIntentBits,
-  Events,
-  PermissionFlagsBits,
+  Partials,
+  REST,
+  Routes,
 } = require("discord.js");
 
-// ===== CONFIG =====
-const TOKEN = process.env.SECURITY_BOT_TOKEN;
-const OWNER_ID = "1350882351743500409"; // YOU
-const STAFF_ROLE = "1381268070248484944"; // Allowed staff
-const LOG_CHANNEL = "1439268049806168194"; // Log channel
-const GUILD_ID = "1381002127765278740"; // Your guild
+require("dotenv").config();
 
-// ===== CREATE BOT =====
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+  partials: [Partials.User, Partials.GuildMember],
 });
 
-// ============ PERMISSION CHECK ============
-function canUseCommand(member) {
-  return (
-    member.id === OWNER_ID ||
-    member.roles.cache.has(STAFF_ROLE)
-  );
+// ============================
+// CONFIG
+// ============================
+const OWNER_ID = "1350882351743500409";
+const STAFF_ROLE = "1381268070248484944";
+const LOG_CHANNEL = "1439268049806168194";
+
+// ============================
+// PERMISSION CHECK
+// ============================
+function canUse(interaction) {
+  if (interaction.user.id === OWNER_ID) return true;
+  if (interaction.member.roles.cache.has(STAFF_ROLE)) return true;
+  return false;
 }
 
 // ============================
-// BOT READY → Register Commands instantly
+// COMMAND DEFINITIONS
 // ============================
-client.once(Events.ClientReady, async (c) => {
-  console.log(`✅ Logged in as ${c.user.tag}`);
+const commands = [
+  {
+    name: "softban",
+    description: "Softban a user by ID (works offline)",
+    options: [
+      {
+        name: "userid",
+        description: "User ID to softban",
+        type: 3,
+        required: true,
+      },
+      {
+        name: "reason",
+        description: "Reason for softban",
+        type: 3,
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "hardban",
+    description: "Permanently ban a user by ID",
+    options: [
+      {
+        name: "userid",
+        description: "User ID to ban",
+        type: 3,
+        required: true,
+      },
+      {
+        name: "reason",
+        description: "Reason for ban",
+        type: 3,
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "unban",
+    description: "Unban a user by ID",
+    options: [
+      {
+        name: "userid",
+        description: "User ID to unban",
+        type: 3,
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "kick",
+    description: "Kick a user (must be in server)",
+    options: [
+      {
+        name: "user",
+        description: "User to kick",
+        type: 6,
+        required: true,
+      },
+      {
+        name: "reason",
+        description: "Reason for kick",
+        type: 3,
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "warn",
+    description: "Warn a user (offline supported)",
+    options: [
+      {
+        name: "userid",
+        description: "User ID to warn",
+        type: 3,
+        required: true,
+      },
+      {
+        name: "reason",
+        description: "Reason for warning",
+        type: 3,
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "lookup",
+    description: "Lookup a user's info by ID",
+    options: [
+      {
+        name: "userid",
+        description: "The user ID to look up",
+        type: 3,
+        required: true,
+      },
+    ],
+  },
+];
 
-  const commands = [
-    {
-      name: "softban",
-      description: "Soft-ban a user (ban + delete 7 days messages).",
-      options: [
-        {
-          name: "user",
-          description: "Select the user to softban",
-          type: 6,
-          required: true,
-        },
-        {
-          name: "reason",
-          description: "Reason for softban",
-          type: 3,
-          required: false,
-        },
-      ],
-    },
-    {
-      name: "unban",
-      description: "Unban a user by ID.",
-      options: [
-        {
-          name: "userid",
-          description: "User ID to unban",
-          type: 3,
-          required: true,
-        },
-        {
-          name: "reason",
-          description: "Reason for unban",
-          type: 3,
-          required: false,
-        },
-      ],
-    },
-    {
-      name: "securityping",
-      description: "Check if the security bot is online.",
-    },
-  ];
+// ============================
+// REGISTER SLASH COMMANDS
+// ============================
+const rest = new REST({ version: "10" }).setToken(process.env.SECURITY_BOT_TOKEN);
 
-  // REGISTER (*GUILD COMMANDS → INSTANT APPEARANCE*)
-  try {
-    const guild = client.guilds.cache.get(GUILD_ID);
-    if (guild) {
-      await guild.commands.set(commands);
-      console.log("⚡ Slash commands registered instantly (guild mode).");
-    } else {
-      console.log("❌ Guild not found, commands NOT registered.");
-    }
-  } catch (e) {
-    console.log("❌ Command registration error:", e);
-  }
+client.once("ready", async () => {
+  console.log(`🔒 Security Bot Logged in as ${client.user.tag}`);
+
+  await rest.put(
+    Routes.applicationCommands(client.user.id),
+    { body: commands }
+  );
+
+  console.log("✅ Slash commands registered");
 });
 
 // ============================
-// COMMAND HANDLER
+// COMMAND LOGIC
 // ============================
-client.on(Events.InteractionCreate, async (interaction) => {
+client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  const member = interaction.member;
+  // Permission check
+  if (!canUse(interaction))
+    return interaction.reply({ content: "❌ You are not allowed to use this command.", ephemeral: true });
 
-  // Unauthorized attempt
-  if (!canUseCommand(member)) {
-    return interaction.reply({
-      content: "❌ You are **not authorized** to use this command.",
-      ephemeral: true,
-    });
-  }
-
-  // Logging channel
   const logChannel = interaction.guild.channels.cache.get(LOG_CHANNEL);
 
   // ============================
-  // /securityping
-  // ============================
-  if (interaction.commandName === "securityping") {
-    return interaction.reply({
-      content: "🛡️ Blox & Co Security Bot is **online & protecting the server**.",
-      ephemeral: true,
-    });
-  }
-
-  // ============================
-  // /softban
+  // SOFTBAN
   // ============================
   if (interaction.commandName === "softban") {
-    const user = interaction.options.getUser("user");
-    const reason = interaction.options.getString("reason") || "No reason provided";
+    const id = interaction.options.getString("userid");
+    const reason = interaction.options.getString("reason") || "No reason";
 
     try {
-      const memberToBan = await interaction.guild.members.fetch(user.id);
+      const user = await client.users.fetch(id);
 
-      await memberToBan.ban({
-        deleteMessageSeconds: 7 * 24 * 60 * 60,
+      await interaction.guild.members.ban(id, {
+        deleteMessageSeconds: 7 * 24 * 3600,
         reason: reason,
       });
 
-      await interaction.reply(`🔨 **Softbanned:** ${user.tag}\n📄 **Reason:** ${reason}`);
+      await interaction.guild.members.unban(id, "Softban cleanup");
 
-      if (logChannel)
-        logChannel.send(`🛡️ **Softban executed**\n👤 User: ${user.tag}\n📝 Reason: ${reason}\n👮 By: ${interaction.user.tag}`);
+      await interaction.reply(`🔨 Softbanned **${user.tag}**`);
+
+      logChannel?.send(
+        `🛡️ **Softban**\n👤 User: ${user.tag}\n📄 Reason: ${reason}\n👮 By: ${interaction.user.tag}`
+      );
     } catch (err) {
-      console.log(err);
-      return interaction.reply({
-        content: "❌ Failed to softban the user.",
-        ephemeral: true,
-      });
+      return interaction.reply({ content: "❌ Invalid ID or missing permissions.", ephemeral: true });
     }
   }
 
   // ============================
-  // /unban
+  // HARDBAN
   // ============================
-  if (interaction.commandName === "unban") {
-    const userid = interaction.options.getString("userid");
-    const reason = interaction.options.getString("reason") || "No reason provided";
+  if (interaction.commandName === "hardban") {
+    const id = interaction.options.getString("userid");
+    const reason = interaction.options.getString("reason") || "No reason";
 
     try {
-      await interaction.guild.bans.remove(userid, reason);
+      const user = await client.users.fetch(id);
 
-      await interaction.reply(`🔓 **Unbanned:** ${userid}`);
+      await interaction.guild.members.ban(id, { reason });
 
-      if (logChannel)
-        logChannel.send(`🛡️ **Unban executed**\n👤 User ID: ${userid}\n📝 Reason: ${reason}\n👮 By: ${interaction.user.tag}`);
-    } catch (err) {
-      console.log(err);
-      return interaction.reply({
-        content: "❌ Failed to unban that user ID.",
-        ephemeral: true,
-      });
+      await interaction.reply(`⛔ Hardbanned **${user.tag}**`);
+
+      logChannel?.send(
+        `🚨 **Hardban**\n👤 User: ${user.tag}\n📄 Reason: ${reason}\n👮 By: ${interaction.user.tag}`
+      );
+    } catch {
+      return interaction.reply({ content: "❌ Failed to ban user.", ephemeral: true });
+    }
+  }
+
+  // ============================
+  // UNBAN
+  // ============================
+  if (interaction.commandName === "unban") {
+    const id = interaction.options.getString("userid");
+
+    try {
+      const user = await client.users.fetch(id);
+
+      await interaction.guild.members.unban(id);
+
+      await interaction.reply(`🔓 Unbanned **${user.tag}**`);
+
+      logChannel?.send(
+        `🔓 **Unban**\n👤 User: ${user.tag}\n👮 By: ${interaction.user.tag}`
+      );
+    } catch {
+      return interaction.reply({ content: "❌ Failed to unban.", ephemeral: true });
+    }
+  }
+
+  // ============================
+  // KICK
+  // ============================
+  if (interaction.commandName === "kick") {
+    const user = interaction.options.getUser("user");
+    const reason = interaction.options.getString("reason") || "No reason";
+
+    try {
+      const member = await interaction.guild.members.fetch(user.id);
+      await member.kick(reason);
+
+      await interaction.reply(`👢 Kicked **${user.tag}**`);
+
+      logChannel?.send(
+        `👢 **Kick**\n👤 User: ${user.tag}\n📄 Reason: ${reason}\n👮 By: ${interaction.user.tag}`
+      );
+    } catch {
+      return interaction.reply({ content: "❌ Failed to kick user.", ephemeral: true });
+    }
+  }
+
+  // ============================
+  // WARN
+  // ============================
+  if (interaction.commandName === "warn") {
+    const id = interaction.options.getString("userid");
+    const reason = interaction.options.getString("reason") || "No reason";
+
+    try {
+      const user = await client.users.fetch(id);
+
+      await interaction.reply(`⚠️ Warned **${user.tag}**`);
+
+      logChannel?.send(
+        `⚠️ **Warning**\n👤 User: ${user.tag}\n📄 Reason: ${reason}\n👮 By: ${interaction.user.tag}`
+      );
+    } catch {
+      return interaction.reply({ content: "❌ Failed to warn user.", ephemeral: true });
+    }
+  }
+
+  // ============================
+  // LOOKUP
+  // ============================
+  if (interaction.commandName === "lookup") {
+    const id = interaction.options.getString("userid");
+
+    try {
+      const user = await client.users.fetch(id);
+
+      const created = `<t:${Math.floor(user.createdTimestamp / 1000)}:R>`;
+
+      await interaction.reply(
+        `🕵️ **User Lookup**\n\n` +
+        `👤 Username: **${user.tag}**\n` +
+        `🆔 ID: ${user.id}\n` +
+        `📅 Created: ${created}`
+      );
+    } catch {
+      return interaction.reply({ content: "❌ Invalid ID.", ephemeral: true });
     }
   }
 });
@@ -193,4 +300,4 @@ client.on(Events.InteractionCreate, async (interaction) => {
 // ============================
 // LOGIN
 // ============================
-client.login(TOKEN);
+client.login(process.env.SECURITY_BOT_TOKEN);
