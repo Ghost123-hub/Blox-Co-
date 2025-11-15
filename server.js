@@ -1,7 +1,28 @@
 // ============================
-// SECURITY BOT – FULL MODERATION SUITE
+// Blox & Co Security Bot – Full Moderation Suite
 // ============================
 
+// ---- Load env vars ----
+require("dotenv").config();
+
+// ============================
+// Simple Express server (for Render/Uptime checks)
+// ============================
+const express = require("express");
+const app = express();
+const HTTP_PORT = process.env.PORT || 3000;
+
+app.get("/", (req, res) => {
+  res.send("🛡️ Blox & Co Security Bot is running!");
+});
+
+app.listen(HTTP_PORT, () => {
+  console.log(`🌐 Web server listening on port ${HTTP_PORT}`);
+});
+
+// ============================
+// DISCORD.JS SECURITY BOT
+// ============================
 const {
   Client,
   GatewayIntentBits,
@@ -9,8 +30,6 @@ const {
   REST,
   Routes,
 } = require("discord.js");
-
-require("dotenv").config();
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
@@ -28,6 +47,7 @@ const LOG_CHANNEL = "1439268049806168194";
 // PERMISSION CHECK
 // ============================
 function canUse(interaction) {
+  if (!interaction || !interaction.member) return false;
   if (interaction.user.id === OWNER_ID) return true;
   if (interaction.member.roles.cache.has(STAFF_ROLE)) return true;
   return false;
@@ -136,19 +156,22 @@ const commands = [
 ];
 
 // ============================
-// REGISTER SLASH COMMANDS
+// REGISTER SLASH COMMANDS (GLOBAL)
 // ============================
 const rest = new REST({ version: "10" }).setToken(process.env.SECURITY_BOT_TOKEN);
 
 client.once("ready", async () => {
   console.log(`🔒 Security Bot Logged in as ${client.user.tag}`);
 
-  await rest.put(
-    Routes.applicationCommands(client.user.id),
-    { body: commands }
-  );
-
-  console.log("✅ Slash commands registered");
+  try {
+    await rest.put(
+      Routes.applicationCommands(client.user.id),
+      { body: commands }
+    );
+    console.log("✅ Slash commands registered");
+  } catch (err) {
+    console.error("❌ Error registering slash commands:", err);
+  }
 });
 
 // ============================
@@ -158,8 +181,12 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   // Permission check
-  if (!canUse(interaction))
-    return interaction.reply({ content: "❌ You are not allowed to use this command.", ephemeral: true });
+  if (!canUse(interaction)) {
+    return interaction.reply({
+      content: "❌ You are not allowed to use this command.",
+      ephemeral: true,
+    });
+  }
 
   const logChannel = interaction.guild.channels.cache.get(LOG_CHANNEL);
 
@@ -186,7 +213,11 @@ client.on("interactionCreate", async (interaction) => {
         `🛡️ **Softban**\n👤 User: ${user.tag}\n📄 Reason: ${reason}\n👮 By: ${interaction.user.tag}`
       );
     } catch (err) {
-      return interaction.reply({ content: "❌ Invalid ID or missing permissions.", ephemeral: true });
+      console.error(err);
+      return interaction.reply({
+        content: "❌ Invalid ID or missing permissions.",
+        ephemeral: true,
+      });
     }
   }
 
@@ -207,8 +238,12 @@ client.on("interactionCreate", async (interaction) => {
       logChannel?.send(
         `🚨 **Hardban**\n👤 User: ${user.tag}\n📄 Reason: ${reason}\n👮 By: ${interaction.user.tag}`
       );
-    } catch {
-      return interaction.reply({ content: "❌ Failed to ban user.", ephemeral: true });
+    } catch (err) {
+      console.error(err);
+      return interaction.reply({
+        content: "❌ Failed to ban user.",
+        ephemeral: true,
+      });
     }
   }
 
@@ -228,8 +263,12 @@ client.on("interactionCreate", async (interaction) => {
       logChannel?.send(
         `🔓 **Unban**\n👤 User: ${user.tag}\n👮 By: ${interaction.user.tag}`
       );
-    } catch {
-      return interaction.reply({ content: "❌ Failed to unban.", ephemeral: true });
+    } catch (err) {
+      console.error(err);
+      return interaction.reply({
+        content: "❌ Failed to unban.",
+        ephemeral: true,
+      });
     }
   }
 
@@ -249,8 +288,12 @@ client.on("interactionCreate", async (interaction) => {
       logChannel?.send(
         `👢 **Kick**\n👤 User: ${user.tag}\n📄 Reason: ${reason}\n👮 By: ${interaction.user.tag}`
       );
-    } catch {
-      return interaction.reply({ content: "❌ Failed to kick user.", ephemeral: true });
+    } catch (err) {
+      console.error(err);
+      return interaction.reply({
+        content: "❌ Failed to kick user.",
+        ephemeral: true,
+      });
     }
   }
 
@@ -269,8 +312,12 @@ client.on("interactionCreate", async (interaction) => {
       logChannel?.send(
         `⚠️ **Warning**\n👤 User: ${user.tag}\n📄 Reason: ${reason}\n👮 By: ${interaction.user.tag}`
       );
-    } catch {
-      return interaction.reply({ content: "❌ Failed to warn user.", ephemeral: true });
+    } catch (err) {
+      console.error(err);
+      return interaction.reply({
+        content: "❌ Failed to warn user.",
+        ephemeral: true,
+      });
     }
   }
 
@@ -291,8 +338,12 @@ client.on("interactionCreate", async (interaction) => {
         `🆔 ID: ${user.id}\n` +
         `📅 Created: ${created}`
       );
-    } catch {
-      return interaction.reply({ content: "❌ Invalid ID.", ephemeral: true });
+    } catch (err) {
+      console.error(err);
+      return interaction.reply({
+        content: "❌ Invalid ID.",
+        ephemeral: true,
+      });
     }
   }
 });
@@ -300,4 +351,9 @@ client.on("interactionCreate", async (interaction) => {
 // ============================
 // LOGIN
 // ============================
-client.login(process.env.SECURITY_BOT_TOKEN);
+const token = process.env.SECURITY_BOT_TOKEN;
+if (!token) {
+  console.error("❌ SECURITY_BOT_TOKEN is missing from environment variables!");
+} else {
+  client.login(token);
+}
