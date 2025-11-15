@@ -1,194 +1,161 @@
-// ================================
-// SECURITY BOT - UPDATED VERSION
-// ================================
+// ==========================================
+//  SECURITY BOT v2 — FIXED + REBUILT CLEAN
+// ==========================================
 
-// ----------------------
-// KEEP-ALIVE EXPRESS APP
-// ----------------------
+// ---------- KEEPALIVE SERVER ----------
 const express = require("express");
 const app = express();
-app.get("/", (req, res) => res.send("✅ Security Bot Running"));
-app.listen(process.env.PORT || 3000);
+app.get("/", (req, res) => res.send("✅ Security Bot is alive."));
+app.listen(process.env.PORT || 3000, () =>
+  console.log("🌐 Keepalive server running")
+);
 
-// ----------------------
-// DISCORD BOT SETUP
-// ----------------------
-const { 
-  Client, 
-  GatewayIntentBits, 
-  Partials, 
-  SlashCommandBuilder,
-  Routes,
-  REST 
-} = require("discord.js");
-
+// ---------- DISCORD.JS ----------
+const { Client, GatewayIntentBits, PermissionsBitField, SlashCommandBuilder, Routes, REST } = require("discord.js");
 require("dotenv").config();
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ],
-  partials: [Partials.Channel]
+    GatewayIntentBits.GuildMembers
+  ]
 });
 
-// ----------------------
-// CONFIG
-// ----------------------
+// ---------- CONFIG ----------
 const OWNER_ID = "1350882351743500409";
 
 const STAFF_ROLES = [
-  "1381268070248484944",
-  "1381268072828112896"
+  "1397546010317684786",
+  "1381268185671667732",
+  "1381268072828112896",
+  "1381268070248484944"
 ];
 
-const LOG_CHANNEL = "1439268049806168194";
+const LOG_CHANNEL_ID = "1439268049806168194";
 
-// Softbanned users stored in memory
-let bannedUsers = [];
+let softbannedUsers = new Set(); // stores softbanned user IDs
 
-// ----------------------
-// PERMISSION CHECK
-// ----------------------
+// ---------- PERMISSION CHECK ----------
 function hasPermission(member) {
   if (!member) return false;
 
-  // owner always allowed
   if (member.id === OWNER_ID) return true;
 
-  // check if user has any allowed roles
-  return member.roles.cache.some(role => STAFF_ROLES.includes(role.id));
+  return member.roles.cache.some(r => STAFF_ROLES.includes(r.id));
 }
 
-// ----------------------
-// DEFINE SLASH COMMANDS
-// ----------------------
+// ---------- SLASH COMMANDS ----------
 const commands = [
   new SlashCommandBuilder()
     .setName("softban")
-    .setDescription("Softban a user (removes them on rejoin).")
-    .addStringOption(opt => 
-      opt.setName("user_id")
-        .setDescription("The user ID to softban")
+    .setDescription("Softban a user (blocked from joining).")
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to softban")
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("unsoftban")
     .setDescription("Remove a user from the softban list.")
-    .addStringOption(opt =>
-      opt.setName("user_id")
-        .setDescription("The user ID to unban")
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to unsoftban")
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("softbanlist")
-    .setDescription("Show all softbanned users.")
-].map(cmd => cmd.toJSON());
+    .setDescription("Shows all softbanned users.")
+];
 
-// ----------------------
-// REGISTER SLASH COMMANDS
-// ----------------------
 const rest = new REST({ version: "10" }).setToken(process.env.SECURITY_BOT_TOKEN);
 
-(async () => {
+// ---------- REGISTER SLASH COMMANDS ----------
+client.on("ready", async () => {
   try {
-    console.log("⏳ Registering slash commands...");
     await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
+      Routes.applicationCommands(client.user.id),
       { body: commands }
     );
-    console.log("✅ Slash commands registered!");
+    console.log("✅ Slash commands registered.");
   } catch (err) {
-    console.error("❌ Error registering slash commands:", err);
+    console.log("❌ Command registration error:", err);
   }
-})();
 
-// ----------------------
-// EVENT: BOT READY
-// ----------------------
-client.once("ready", () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
+  console.log(`🔒 Security Bot logged in as ${client.user.tag}`);
 });
 
-// ----------------------
-// EVENT: MEMBER JOINS
-// AUTO-KICK IF SOFTBANNED
-// ----------------------
-client.on("guildMemberAdd", member => {
-  if (bannedUsers.includes(member.id)) {
-    member.kick("Softbanned user rejoined.");
+// ---------- EVENT: MEMBER JOIN ----------
+client.on("guildMemberAdd", async (member) => {
+  if (softbannedUsers.has(member.id)) {
+    await member.kick("User is softbanned.");
 
-    const log = member.guild.channels.cache.get(LOG_CHANNEL);
+    const log = member.guild.channels.cache.get(LOG_CHANNEL_ID);
     if (log) {
-      log.send(
-        `🚨 **Auto-Kicked Softbanned User**\nUser: <@${member.id}> (${member.id})`
-      );
+      log.send(`🚫 **Softbanned user attempted to join:** ${member.user.tag} (\`${member.id}\`)`);
     }
   }
 });
 
-// ----------------------
-// SLASH COMMAND HANDLER
-// ----------------------
-client.on("interactionCreate", async interaction => {
+// ---------- EVENT: SLASH COMMAND ----------
+client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  const { commandName } = interaction;
+  const { commandName, member, options } = interaction;
 
-  if (!hasPermission(interaction.member)) {
-    return interaction.reply({
-      content: "❌ You do not have permission to use this command.",
-      ephemeral: true
-    });
+  if (!hasPermission(member)) {
+    return interaction.reply({ content: "❌ You do not have permission to use this command.", ephemeral: true });
   }
 
-  // --------------- SOFTBAN ----------------
-  if (commandName === "softban") {
-    const userId = interaction.options.getString("user_id");
+  const userId = options.getString("userid");
 
-    if (!bannedUsers.includes(userId)) {
-      bannedUsers.push(userId);
-    }
+  switch (commandName) {
+    case "softban":
+      softbannedUsers.add(userId);
 
-    const log = interaction.guild.channels.cache.get(LOG_CHANNEL);
-    if (log) {
-      log.send(`🔨 **Softban Added**\nUser ID: ${userId}\nExecutor: <@${interaction.user.id}>`);
-    }
+      interaction.reply({
+        content: `🔒 User **${userId}** has been **SOFTBANNED**.`,
+        ephemeral: true
+      });
 
-    return interaction.reply(`✅ User ID **${userId}** has been softbanned.`);
-  }
+      client.channels.cache.get(LOG_CHANNEL_ID)?.send(
+        `🚫 **Softban Added**  
+        User ID: \`${userId}\`  
+        Staff: ${member.user.tag} (${member.id})`
+      );
 
-  // ---------------- UNSOFTBAN -----------------
-  if (commandName === "unsoftban") {
-    const userId = interaction.options.getString("user_id");
+      break;
 
-    bannedUsers = bannedUsers.filter(id => id !== userId);
+    case "unsoftban":
+      if (!softbannedUsers.has(userId)) {
+        return interaction.reply({ content: "❌ This user is not softbanned.", ephemeral: true });
+      }
 
-    const log = interaction.guild.channels.cache.get(LOG_CHANNEL);
-    if (log) {
-      log.send(`🔓 **Softban Removed**\nUser ID: ${userId}\nExecutor: <@${interaction.user.id}>`);
-    }
+      softbannedUsers.delete(userId);
 
-    return interaction.reply(`✅ User ID **${userId}** has been unsoftbanned.`);
-  }
+      interaction.reply({
+        content: `🔓 User **${userId}** has been **UN-SOFTBANNED**.`,
+        ephemeral: true
+      });
 
-  // ---------------- BAN LIST -----------------
-  if (commandName === "softbanlist") {
-    if (bannedUsers.length === 0)
-      return interaction.reply("📭 No softbanned users.");
+      client.channels.cache.get(LOG_CHANNEL_ID)?.send(
+        `🔓 **Softban Removed**  
+        User ID: \`${userId}\`  
+        Staff: ${member.user.tag}`
+      );
+      break;
 
-    return interaction.reply(
-      "**📌 Softbanned Users:**\n" +
-      bannedUsers.map(id => `• ${id}`).join("\n")
-    );
+    case "softbanlist":
+      const list = [...softbannedUsers].join("\n") || "No users softbanned.";
+
+      interaction.reply({
+        content: `📜 **Softbanned Users:**\n${list}`,
+        ephemeral: true
+      });
+      break;
   }
 });
 
-// ----------------------
-// LOGIN BOT
-// ----------------------
+// ---------- LOGIN ----------
 client.login(process.env.SECURITY_BOT_TOKEN);
