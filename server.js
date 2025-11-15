@@ -1,5 +1,5 @@
 // ==========================================
-//  SECURITY BOT v2 — FIXED + REBUILT CLEAN
+//  SECURITY BOT v3 — WITH HARDWARE BAN SYSTEM
 // ==========================================
 
 // ---------- KEEPALIVE SERVER ----------
@@ -13,15 +13,13 @@ app.listen(process.env.PORT || 3000, () =>
 // ---------- DISCORD.JS ----------
 const { Client, GatewayIntentBits, PermissionsBitField, SlashCommandBuilder, Routes, REST } = require("discord.js");
 require("dotenv").config();
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers
-  ]
-});
+const fs = require("fs");
 
 // ---------- CONFIG ----------
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+});
+
 const OWNER_ID = "1350882351743500409";
 
 const STAFF_ROLES = [
@@ -33,7 +31,23 @@ const STAFF_ROLES = [
 
 const LOG_CHANNEL_ID = "1439268049806168194";
 
-let softbannedUsers = new Set(); // stores softbanned user IDs
+// ---------- LOAD / SAVE HARDWARE BAN LIST ----------
+const HARDWARE_BAN_FILE = "./hardwarebans.json";
+
+let hardwareBans = [];
+
+if (fs.existsSync(HARDWARE_BAN_FILE)) {
+  hardwareBans = JSON.parse(fs.readFileSync(HARDWARE_BAN_FILE, "utf8"));
+} else {
+  fs.writeFileSync(HARDWARE_BAN_FILE, JSON.stringify([]));
+}
+
+function saveHardwareBans() {
+  fs.writeFileSync(HARDWARE_BAN_FILE, JSON.stringify(hardwareBans, null, 4));
+}
+
+// ---------- SOFTBAN STORAGE ----------
+let softbannedUsers = new Set();
 
 // ---------- PERMISSION CHECK ----------
 function hasPermission(member) {
@@ -46,6 +60,7 @@ function hasPermission(member) {
 
 // ---------- SLASH COMMANDS ----------
 const commands = [
+  // SOFTBAN
   new SlashCommandBuilder()
     .setName("softban")
     .setDescription("Softban a user (blocked from joining).")
@@ -66,7 +81,30 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("softbanlist")
-    .setDescription("Shows all softbanned users.")
+    .setDescription("Shows all softbanned users."),
+
+  // HARDWARE BAN
+  new SlashCommandBuilder()
+    .setName("hardwareban")
+    .setDescription("Hardware-ban a user ID permanently.")
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to hardware ban")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("unhardwareban")
+    .setDescription("Remove a hardware ban from a user.")
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to un-ban")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("hardwarebanlist")
+    .setDescription("Shows all hardware-banned users.")
 ];
 
 const rest = new REST({ version: "10" }).setToken(process.env.SECURITY_BOT_TOKEN);
@@ -86,71 +124,111 @@ client.on("ready", async () => {
   console.log(`🔒 Security Bot logged in as ${client.user.tag}`);
 });
 
-// ---------- EVENT: MEMBER JOIN ----------
+// ---------- AUTO-KICK ON JOIN ----------
 client.on("guildMemberAdd", async (member) => {
+  // if softbanned
   if (softbannedUsers.has(member.id)) {
-    await member.kick("User is softbanned.");
+    await member.kick("Softbanned.");
+    client.channels.cache.get(LOG_CHANNEL_ID)?.send(
+      `🚫 **Softbanned user attempted to join:** ${member.user.tag} (\`${member.id}\`)`
+    );
+    return;
+  }
 
-    const log = member.guild.channels.cache.get(LOG_CHANNEL_ID);
-    if (log) {
-      log.send(`🚫 **Softbanned user attempted to join:** ${member.user.tag} (\`${member.id}\`)`);
-    }
+  // if hardware banned
+  if (hardwareBans.includes(member.id)) {
+    await member.kick("Hardware banned.");
+    client.channels.cache.get(LOG_CHANNEL_ID)?.send(
+      `🔨 **Hardware-Banned user attempted to join:**  
+       Tag: ${member.user.tag}  
+       ID: \`${member.id}\``
+    );
   }
 });
 
-// ---------- EVENT: SLASH COMMAND ----------
+// ---------- SLASH COMMAND HANDLER ----------
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   const { commandName, member, options } = interaction;
 
   if (!hasPermission(member)) {
-    return interaction.reply({ content: "❌ You do not have permission to use this command.", ephemeral: true });
+    return interaction.reply({
+      content: "❌ You do not have permission to use this.",
+      ephemeral: true
+    });
   }
 
   const userId = options.getString("userid");
 
   switch (commandName) {
+
+    // ------- SOFTBAN -------
     case "softban":
       softbannedUsers.add(userId);
+      interaction.reply({ content: `🔒 Softbanned **${userId}**`, ephemeral: true });
+      client.channels.cache.get(LOG_CHANNEL_ID)?.send(
+        `🚫 **Softban Added**\nUser: \`${userId}\`\nStaff: ${member.user.tag}`
+      );
+      break;
 
+    case "unsoftban":
+      if (!softbannedUsers.has(userId))
+        return interaction.reply({ content: "⚠️ User not softbanned.", ephemeral: true });
+
+      softbannedUsers.delete(userId);
+      interaction.reply({ content: `🔓 Removed softban on **${userId}**`, ephemeral: true });
+      client.channels.cache.get(LOG_CHANNEL_ID)?.send(
+        `🔓 **Softban Removed**\nUser: \`${userId}\`\nStaff: ${member.user.tag}`
+      );
+      break;
+
+    case "softbanlist":
       interaction.reply({
-        content: `🔒 User **${userId}** has been **SOFTBANNED**.`,
+        content: `📜 Softbanned Users:\n${[...softbannedUsers].join("\n") || "None"}`,
         ephemeral: true
       });
+      break;
+
+    // ------- HARDWARE BAN -------
+    case "hardwareban":
+      if (hardwareBans.includes(userId)) {
+        return interaction.reply({ content: "⚠️ This user is already hardware banned.", ephemeral: true });
+      }
+
+      hardwareBans.push(userId);
+      saveHardwareBans();
+
+      interaction.reply({ content: `🔨 Hardware banned **${userId}**`, ephemeral: true });
 
       client.channels.cache.get(LOG_CHANNEL_ID)?.send(
-        `🚫 **Softban Added**  
+        `🔨 **Hardware Ban Added**  
         User ID: \`${userId}\`  
-        Staff: ${member.user.tag} (${member.id})`
+        Staff: ${member.user.tag}`
       );
 
       break;
 
-    case "unsoftban":
-      if (!softbannedUsers.has(userId)) {
-        return interaction.reply({ content: "❌ This user is not softbanned.", ephemeral: true });
+    case "unhardwareban":
+      if (!hardwareBans.includes(userId)) {
+        return interaction.reply({ content: "⚠️ User is not hardware banned.", ephemeral: true });
       }
 
-      softbannedUsers.delete(userId);
+      hardwareBans = hardwareBans.filter(id => id !== userId);
+      saveHardwareBans();
 
-      interaction.reply({
-        content: `🔓 User **${userId}** has been **UN-SOFTBANNED**.`,
-        ephemeral: true
-      });
+      interaction.reply({ content: `🔓 Removed hardware ban for **${userId}**`, ephemeral: true });
 
       client.channels.cache.get(LOG_CHANNEL_ID)?.send(
-        `🔓 **Softban Removed**  
+        `🔓 **Hardware Ban Removed**  
         User ID: \`${userId}\`  
         Staff: ${member.user.tag}`
       );
       break;
 
-    case "softbanlist":
-      const list = [...softbannedUsers].join("\n") || "No users softbanned.";
-
+    case "hardwarebanlist":
       interaction.reply({
-        content: `📜 **Softbanned Users:**\n${list}`,
+        content: `📜 **Hardware Banned Users:**\n${hardwareBans.join("\n") || "None"}`,
         ephemeral: true
       });
       break;
