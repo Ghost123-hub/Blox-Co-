@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Blox & Co Security Portal</title>
+</head>
+<body style="font-family: Arial; text-align:center; padding-top:50px">
+    <h1>🔒 Blox & Co Security Portal</h1>
+    <p>Your visit may be logged for analytics & security.</p>
+
+    <button onclick="logVisitor()" style="padding:10px 20px; font-size:16px;">
+        Continue
+    </button>
+
+    <script>
+        function logVisitor() {
+            fetch("/log")
+            alert("You're now logged. Welcome!")
+        }
+    </script>
+</body>
+</html>
