@@ -2,6 +2,7 @@
 //  BLOX & CO SECURITY BOT v5
 //  - Softban + Hardware Ban
 //  - Lookup Command
+//  - Full Command Logging
 //  - Staff Role-Gated Slash Commands
 // ==========================================
 
@@ -21,6 +22,7 @@ const {
   REST,
   EmbedBuilder
 } = require("discord.js");
+
 require("dotenv").config();
 const fs = require("fs");
 
@@ -52,13 +54,14 @@ const HARDWARE_BAN_FILE = "./hardwarebans.json";
 let softbannedUsers = new Set();
 let hardwareBans = [];
 
-// Load stored data
+// Load stored softbans
 if (fs.existsSync(SOFTBAN_FILE)) {
   softbannedUsers = new Set(JSON.parse(fs.readFileSync(SOFTBAN_FILE)));
 } else {
   fs.writeFileSync(SOFTBAN_FILE, JSON.stringify([]));
 }
 
+// Load stored hardware bans
 if (fs.existsSync(HARDWARE_BAN_FILE)) {
   hardwareBans = JSON.parse(fs.readFileSync(HARDWARE_BAN_FILE));
 } else {
@@ -77,69 +80,53 @@ function saveHardwareBans() {
 function hasPermission(member) {
   if (!member) return false;
   if (member.id === OWNER_ID) return true;
-
   return member.roles.cache.some((r) => STAFF_ROLES.includes(r.id));
 }
 
 // ---------- SLASH COMMAND DEFINITIONS ----------
 const commands = [
-
-  // SOFTBAN
   new SlashCommandBuilder()
     .setName("softban")
     .setDescription("Softban a user (blocked from joining).")
     .addStringOption(o =>
-      o.setName("userid")
-        .setDescription("User ID")
-        .setRequired(true)
+      o.setName("userid").setDescription("User ID").setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("unsoftban")
     .setDescription("Remove a user from the softban list.")
     .addStringOption(o =>
-      o.setName("userid")
-        .setDescription("User ID")
-        .setRequired(true)
+      o.setName("userid").setDescription("User ID").setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("softbanlist")
     .setDescription("Display all softbanned users."),
 
-  // HARDWARE BAN
   new SlashCommandBuilder()
     .setName("hardwareban")
     .setDescription("Hardware-ban a user ID.")
     .addStringOption(o =>
-      o.setName("userid")
-        .setDescription("User ID")
-        .setRequired(true)
+      o.setName("userid").setDescription("User ID").setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("unhardwareban")
     .setDescription("Remove a hardware ban from a user.")
     .addStringOption(o =>
-      o.setName("userid")
-        .setDescription("User ID")
-        .setRequired(true)
+      o.setName("userid").setDescription("User ID").setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("hardwarebanlist")
     .setDescription("Display all hardware bans."),
 
-  // LOOKUP
   new SlashCommandBuilder()
     .setName("lookup")
     .setDescription("Lookup a Discord user by ID.")
     .addStringOption(o =>
-      o.setName("userid")
-        .setDescription("User ID to lookup")
-        .setRequired(true)
-    )
-
+      o.setName("userid").setDescription("User ID to lookup").setRequired(true)
+    ),
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.SECURITY_BOT_TOKEN);
@@ -167,30 +154,64 @@ client.on("guildMemberAdd", async (member) => {
 
   if (softbannedUsers.has(member.id)) {
     await member.kick("Softbanned.");
-    return log?.send(`🚫 **Softbanned user attempted to join:** ${member.user.tag} (\`${member.id}\`)`);
+    return log?.send(
+      `🚫 **Softbanned user attempted to join:** ${member.user.tag} (\`${member.id}\`)`
+    );
   }
 
   if (hardwareBans.includes(member.id)) {
     await member.kick("Hardware banned.");
-    return log?.send(`🔨 **Hardware-Banned user attempted to join:** ${member.user.tag} (\`${member.id}\`)`);
+    return log?.send(
+      `🔨 **Hardware-Banned user attempted to join:** ${member.user.tag} (\`${member.id}\`)`
+    );
   }
 });
 
-// ---------- COMMAND HANDLER ----------
+// =============== FULL COMMAND LOGGING ===============
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   const { commandName, member, options } = interaction;
+  const logChannel = client.channels.cache.get(LOG_CHANNEL_ID);
 
+  // Get argument list
+  const args = [];
+  options._hoistedOptions?.forEach(opt => {
+    args.push(`${opt.name}: ${opt.value}`);
+  });
+
+  const argString = args.length > 0 ? args.join(", ") : "No arguments";
+
+  // Log every attempt
+  logChannel?.send(
+    `📘 **Command Used**\n` +
+    `**User:** ${member.user.tag} (\`${member.id}\`)\n` +
+    `**Command:** /${commandName}\n` +
+    `**Arguments:** ${argString}\n` +
+    `**Timestamp:** <t:${Math.floor(Date.now() / 1000)}:F>`
+  );
+
+  // Permission check
   if (!hasPermission(member)) {
-    return interaction.reply({ content: "❌ You do not have permission.", ephemeral: true });
+    logChannel?.send(
+      `⚠️ **Permission Denied**\n` +
+      `User: ${member.user.tag} attempted **/${commandName}**`
+    );
+
+    return interaction.reply({
+      content: "❌ You do not have permission to use this command.",
+      ephemeral: true,
+    });
   }
 
   const userId = options.getString("userid");
 
   try {
+    // ============================
+    // COMMAND HANDLING
+    // ============================
 
-    // --- /lookup ---
+    // LOOKUP
     if (commandName === "lookup") {
       try {
         const user = await client.users.fetch(userId);
@@ -204,74 +225,149 @@ client.on("interactionCreate", async (interaction) => {
           )
           .setThumbnail(user.displayAvatarURL());
 
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        interaction.reply({ embeds: [embed], ephemeral: true });
+
+        logChannel?.send(
+          `🟢 **Lookup Success**\nTarget: ${user.tag} (\`${user.id}\`)\nStaff: ${member.user.tag}`
+        );
+
       } catch (err) {
-        return interaction.reply({
-          content: "❌ Invalid user ID or user not found.",
-          ephemeral: true
+        interaction.reply({
+          content: "❌ Invalid user ID.",
+          ephemeral: true,
         });
+
+        logChannel?.send(
+          `🔴 **Lookup Failed**\nUser ID: \`${userId}\`\nReason: Invalid ID`
+        );
       }
+      return;
     }
 
-    // --- SOFTBAN ---
+    // SOFTBAN
     if (commandName === "softban") {
       softbannedUsers.add(userId);
       saveSoftbans();
       interaction.reply({ content: `🔒 Softbanned **${userId}**.`, ephemeral: true });
-      client.channels.cache.get(LOG_CHANNEL_ID)?.send(`🚫 Softban Added\nID: \`${userId}\`\nStaff: ${member.user.tag}`);
+
+      logChannel?.send(
+        `🟥 **Softban Added**\nUser ID: \`${userId}\`\nStaff: ${member.user.tag}`
+      );
+      return;
     }
 
+    // UNSOFTBAN
     if (commandName === "unsoftban") {
-      if (!softbannedUsers.has(userId))
-        return interaction.reply({ content: "⚠️ User is not softbanned.", ephemeral: true });
+      if (!softbannedUsers.has(userId)) {
+        interaction.reply({ content: "⚠️ User is not softbanned.", ephemeral: true });
+
+        logChannel?.send(
+          `🔸 **Unsoftban Failed** — Not Banned\nUser: \`${userId}\``
+        );
+        return;
+      }
 
       softbannedUsers.delete(userId);
       saveSoftbans();
-      interaction.reply({ content: `🔓 Removed softban for **${userId}**.`, ephemeral: true });
+      interaction.reply({ content: `🔓 Softban removed for **${userId}**.`, ephemeral: true });
+
+      logChannel?.send(
+        `🟩 **Softban Removed**\nUser: \`${userId}\`\nStaff: ${member.user.tag}`
+      );
+      return;
     }
 
+    // SOFTBAN LIST
     if (commandName === "softbanlist") {
       const list = [...softbannedUsers];
+
       interaction.reply({
-        content: list.length === 0 ?
-          "📜 No users softbanned." :
-          `📜 Softbanned Users:\n${list.map(id => `• \`${id}\``).join("\n")}`,
+        content:
+          list.length === 0
+            ? "📜 No softbanned users."
+            : `📜 Softbanned Users:\n${list.map(id => `• \`${id}\``).join("\n")}`,
         ephemeral: true
       });
+
+      logChannel?.send(`📄 **Softban List Viewed** by ${member.user.tag}`);
+      return;
     }
 
-    // --- HARDWARE ---
+    // HARDWAREBAN
     if (commandName === "hardwareban") {
-      if (hardwareBans.includes(userId))
-        return interaction.reply({ content: "⚠️ Already hardware banned.", ephemeral: true });
+      if (hardwareBans.includes(userId)) {
+        interaction.reply({ content: "⚠️ Already hardware banned.", ephemeral: true });
+
+        logChannel?.send(
+          `🔸 **Hardware Ban Failed** — Already Banned\nUser: \`${userId}\``
+        );
+        return;
+      }
 
       hardwareBans.push(userId);
       saveHardwareBans();
       interaction.reply({ content: `🔨 Hardware banned **${userId}**.`, ephemeral: true });
+
+      logChannel?.send(
+        `🟥 **Hardware Ban Added**\nUser: \`${userId}\`\nStaff: ${member.user.tag}`
+      );
+      return;
     }
 
+    // UNHARDWAREBAN
     if (commandName === "unhardwareban") {
-      if (!hardwareBans.includes(userId))
-        return interaction.reply({ content: "⚠️ User is not hardware banned.", ephemeral: true });
+      if (!hardwareBans.includes(userId)) {
+        interaction.reply({ content: "⚠️ User is not hardware banned.", ephemeral: true });
+
+        logChannel?.send(
+          `🔸 **Unhardwareban Failed** — Not Banned\nUser: \`${userId}\``
+        );
+        return;
+      }
 
       hardwareBans = hardwareBans.filter((id) => id !== userId);
       saveHardwareBans();
-      interaction.reply({ content: `🔓 Removed hardware ban for **${userId}**.`, ephemeral: true });
+
+      interaction.reply({ content: `🔓 Hardware ban removed for **${userId}**.`, ephemeral: true });
+
+      logChannel?.send(
+        `🟩 **Hardware Ban Removed**\nUser: \`${userId}\`\nStaff: ${member.user.tag}`
+      );
+      return;
     }
 
+    // HARDWAREBAN LIST
     if (commandName === "hardwarebanlist") {
       interaction.reply({
         content:
-          hardwareBans.length === 0 ?
-            "📜 No hardware bans." :
-            `📜 Hardware Bans:\n${hardwareBans.map(id => `• \`${id}\``).join("\n")}`,
+          hardwareBans.length === 0
+            ? "📜 No hardware bans."
+            : `📜 Hardware Bans:\n${hardwareBans.map(id => `• \`${id}\``).join("\n")}`,
         ephemeral: true
       });
+
+      logChannel?.send(
+        `📄 **Hardware Ban List Viewed** by ${member.user.tag}`
+      );
+      return;
     }
 
   } catch (err) {
-    console.error("❌ Command error:", err);
-    interaction.reply({ content: "❌ An error occurred.", ephemeral: true });
+    console.error("❌ Error:", err);
+
+    logChannel?.send(
+      `🔴 **Command Error**\n` +
+      `Command: /${commandName}\n` +
+      `User: ${member.user.tag} (\`${member.id}\`)\n` +
+      `Error: \`${err.message}\``
+    );
+
+    if (!interaction.replied) {
+      interaction.reply({
+        content: "❌ An unexpected error occurred.",
+        ephemeral: true,
+      });
+    }
   }
 });
 
