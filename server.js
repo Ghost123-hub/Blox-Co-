@@ -1,5 +1,5 @@
 // ==========================================
-//  BLOX & CO SECURITY BOT v7 (Whitelist Edition)
+//  BLOX & CO SECURITY BOT v7 (Whitelist Edition + Command Fix Patch)
 // ==========================================
 
 const express = require("express");
@@ -81,7 +81,7 @@ const SECURITY_CONFIG = {
   ],
 
   raid: {
-    joinWindowMs: 10_000,
+    joinWindowMs: 10000,
     joinThreshold: 6,
     autoLock: true,
     autoUnlockMs: 5 * 60 * 1000,
@@ -133,8 +133,8 @@ function saveHardwareBans() {
 function hasPermission(member) {
   if (!member) return false;
   if (member.id === OWNER_ID) return true;
-  if (isWhitelisted(member)) return true; // whitelist grants full access
-  return member.roles.cache.some((r) => STAFF_ROLES.includes(r.id));
+  if (isWhitelisted(member)) return true;
+  return member.roles.cache.some(r => STAFF_ROLES.includes(r.id));
 }
 
 // ---------- SECURITY STATE ----------
@@ -157,14 +157,14 @@ function adjustTrust(userId, delta) {
 
 // ---------- BACKUPS ----------
 async function backupGuildStructure(guild) {
-  const rolesData = guild.roles.cache.map((r) => ({
+  const rolesData = guild.roles.cache.map(r => ({
     id: r.id, name: r.name, color: r.color, hoist: r.hoist,
     position: r.position, permissions: r.permissions.bitfield,
     mentionable: r.mentionable
   }));
   backups.roles.set(guild.id, rolesData);
 
-  const channelsData = guild.channels.cache.map((c) => ({
+  const channelsData = guild.channels.cache.map(c => ({
     id: c.id, name: c.name, type: c.type,
     parentId: c.parentId, position: c.position
   }));
@@ -179,7 +179,7 @@ async function autoFixChannelDelete(channel) {
   const log = getLogChannel(guild);
 
   const snapshot = (backups.channels.get(guild.id) || [])
-    .find((c) => c.id === channel.id);
+    .find(c => c.id === channel.id);
 
   if (!snapshot) return;
 
@@ -199,13 +199,13 @@ async function autoFixChannelDelete(channel) {
 
 // ---------- AUTO FIX (Role) ----------
 async function autoFixRoleDelete(role) {
-  if (ROLE_WHITELIST.includes(role.id)) return; // <-- WHITELISTED ROLE
+  if (ROLE_WHITELIST.includes(role.id)) return;
 
   const guild = role.guild;
   const log = getLogChannel(guild);
 
   const snapshot = (backups.roles.get(guild.id) || [])
-    .find((r) => r.id === role.id);
+    .find(r => r.id === role.id);
 
   if (!snapshot) return;
 
@@ -228,7 +228,7 @@ async function autoFixRoleDelete(role) {
 
 // ---------- RAID & ALT DETECTION ----------
 async function handleJoinSecurity(member) {
-  if (isWhitelisted(member)) return; // <-- WHITELISTED USER IMMUNE
+  if (isWhitelisted(member)) return;
 
   const guild = member.guild;
   const log = getLogChannel(guild);
@@ -242,10 +242,9 @@ async function handleJoinSecurity(member) {
 
   let arr = joinHistory.get(guild.id) || [];
   arr.push(now);
-  arr = arr.filter((t) => now - t <= SECURITY_CONFIG.raid.joinWindowMs);
+  arr = arr.filter(t => now - t <= SECURITY_CONFIG.raid.joinWindowMs);
   joinHistory.set(guild.id, arr);
 
-  // R A I D
   if (arr.length >= SECURITY_CONFIG.raid.joinThreshold) {
     log?.send(`🚨 RAID DETECTED!`);
     raidLockdowns.set(guild.id, true);
@@ -257,7 +256,6 @@ async function handleJoinSecurity(member) {
         SendMessages: false
       }).catch(() => {});
 
-      // WHITELIST BYPASS LOCKDOWN
       ROLE_WHITELIST.forEach(id => {
         channel.permissionOverwrites.edit(id, {
           SendMessages: true
@@ -277,7 +275,7 @@ async function handleJoinSecurity(member) {
 async function handleMessageSecurity(message) {
   if (!message.guild) return;
   if (message.author.bot) return;
-  if (isWhitelisted(message.member)) return; // <-- WHITELIST SKIPS SECURITY
+  if (isWhitelisted(message.member)) return;
 
   const guild = message.guild;
   const log = getLogChannel(guild);
@@ -285,7 +283,7 @@ async function handleMessageSecurity(message) {
 
   let arr = messageHistory.get(message.author.id) || [];
   arr.push(now);
-  arr = arr.filter((t) => now - t <= SECURITY_CONFIG.spam.windowMs);
+  arr = arr.filter(t => now - t <= SECURITY_CONFIG.spam.windowMs);
   messageHistory.set(message.author.id, arr);
 
   const triggers = [];
@@ -320,7 +318,7 @@ async function handleMessageSecurity(message) {
 
 // ---------- ANTI-NUKE ----------
 async function handleRoleUpdate(oldRole, newRole) {
-  if (ROLE_WHITELIST.includes(newRole.id)) return; // <-- WHITELIST SKIPS CHECK
+  if (ROLE_WHITELIST.includes(newRole.id)) return;
 
   const guild = newRole.guild;
   const log = getLogChannel(guild);
@@ -367,31 +365,61 @@ async function getAuditExecutor(guild, type, targetId) {
   }
 }
 
-// ---------- COMMAND DEFINITIONS (unchanged) ----------
+// ---------- COMMAND DEFINITIONS (PATCHED & FIXED) ----------
 const commands = [
   new SlashCommandBuilder()
     .setName("softban")
     .setDescription("Softban a user.")
-    .addStringOption(o => o.setName("userid").setRequired(true)),
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to softban")
+        .setRequired(true)
+    ),
+
   new SlashCommandBuilder()
     .setName("unsoftban")
-    .setDescription("Remove a softban.")
-    .addStringOption(o => o.setName("userid").setRequired(true)),
-  new SlashCommandBuilder().setName("softbanlist").setDescription("View all softbans."),
+    .setDescription("Remove a softban from a user.")
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to unsoftban")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("softbanlist")
+    .setDescription("View all softbanned users."),
+
   new SlashCommandBuilder()
     .setName("hardwareban")
     .setDescription("Hardware-ban a user.")
-    .addStringOption(o => o.setName("userid").setRequired(true)),
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to hardware-ban")
+        .setRequired(true)
+    ),
+
   new SlashCommandBuilder()
     .setName("unhardwareban")
-    .setDescription("Remove a hardware ban.")
-    .addStringOption(o => o.setName("userid").setRequired(true)),
-  new SlashCommandBuilder().setName("hardwarebanlist").setDescription("View hardware bans."),
+    .setDescription("Remove a hardware ban from a user.")
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to remove")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("hardwarebanlist")
+    .setDescription("View all hardware-banned users."),
+
   new SlashCommandBuilder()
     .setName("lookup")
-    .setDescription("Lookup a user.")
-    .addStringOption(o => o.setName("userid").setRequired(true)),
-].map(c => c.toJSON());
+    .setDescription("Lookup a user by Discord ID.")
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to lookup")
+        .setRequired(true)
+    )
+].map(cmd => cmd.toJSON());
 
 // ---------- READY ----------
 client.on("ready", async () => {
