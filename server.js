@@ -1,5 +1,5 @@
 // ==========================================
-//  BLOX & CO SECURITY BOT v9
+//  BLOX & CO SECURITY BOT v9 (Upgraded)
 //  - Softban / Hardware Ban / Lookup
 //  - Full Command Logging & Staff Gating
 //  - Anti-Raid, Anti-Nuke, Webhook Defense
@@ -7,8 +7,9 @@
 //  - Auto-Fix (Backups) & Staff Action Logs
 //  - Whitelist System
 //  - Advanced Staff Commands:
-//      /trustscore, /securitystatus,
-//      /lockdown, /unlockdown,
+//      /trustscore, /trustadd, /trustremove,
+//      /trustset, /trustreset, /trustwipe,
+//      /securitystatus, /lockdown, /unlockdown,
 //      /checkalt, /serverhealth, /panic
 //  - Staff Help Command:
 //      /securityhelp
@@ -130,9 +131,11 @@ const SECURITY_CONFIG = {
 // ---------- FILE HANDLING ----------
 const SOFTBAN_FILE = "./softbans.json";
 const HARDWARE_BAN_FILE = "./hardwarebans.json";
+const TRUST_FILE = "./trust.json";
 
 let softbannedUsers = new Set();
 let hardwareBans = [];
+let trustScores = new Map();
 
 if (fs.existsSync(SOFTBAN_FILE)) {
   softbannedUsers = new Set(JSON.parse(fs.readFileSync(SOFTBAN_FILE)));
@@ -146,12 +149,35 @@ if (fs.existsSync(HARDWARE_BAN_FILE)) {
   fs.writeFileSync(HARDWARE_BAN_FILE, "[]");
 }
 
+// Load trust.json into trustScores map
+if (fs.existsSync(TRUST_FILE)) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(TRUST_FILE));
+    trustScores = new Map(
+      Object.entries(raw).map(([id, score]) => [id, Number(score) || 0])
+    );
+  } catch (err) {
+    console.error("⚠️ Failed to load trust.json, starting with empty trust map:", err);
+    trustScores = new Map();
+  }
+} else {
+  fs.writeFileSync(TRUST_FILE, "{}");
+}
+
 function saveSoftbans() {
   fs.writeFileSync(SOFTBAN_FILE, JSON.stringify([...softbannedUsers], null, 2));
 }
 
 function saveHardwareBans() {
   fs.writeFileSync(HARDWARE_BAN_FILE, JSON.stringify(hardwareBans, null, 2));
+}
+
+function saveTrust() {
+  const obj = {};
+  for (const [id, score] of trustScores.entries()) {
+    obj[id] = score;
+  }
+  fs.writeFileSync(TRUST_FILE, JSON.stringify(obj, null, 2));
 }
 
 // ---------- PERMISSION CHECK ----------
@@ -166,7 +192,6 @@ function hasPermission(member) {
 const joinHistory = new Map();
 const raidLockdowns = new Map();
 const messageHistory = new Map();
-const trustScores = new Map();
 const backups = { roles: new Map(), channels: new Map() };
 
 function getLogChannel(guild) {
@@ -178,7 +203,15 @@ function adjustTrust(userId, delta) {
   const old = trustScores.get(userId) || 0;
   const next = old + delta;
   trustScores.set(userId, next);
+  saveTrust();
   return next;
+}
+
+function setTrust(userId, value) {
+  const v = Number(value) || 0;
+  trustScores.set(userId, v);
+  saveTrust();
+  return v;
 }
 
 function getTrust(userId) {
@@ -615,6 +648,61 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName("trustadd")
+    .setDescription("Increase a user's trust score.")
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to modify")
+        .setRequired(true)
+    )
+    .addIntegerOption(o =>
+      o.setName("amount")
+        .setDescription("Amount to add (e.g. 5, 10, 20)")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("trustremove")
+    .setDescription("Decrease a user's trust score.")
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to modify")
+        .setRequired(true)
+    )
+    .addIntegerOption(o =>
+      o.setName("amount")
+        .setDescription("Amount to remove (e.g. 5, 10, 20)")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("trustset")
+    .setDescription("Set a user's trust score to a specific value.")
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to modify")
+        .setRequired(true)
+    )
+    .addIntegerOption(o =>
+      o.setName("value")
+        .setDescription("Exact trust value (can be negative)")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("trustreset")
+    .setDescription("Reset a user's trust score back to 0.")
+    .addStringOption(o =>
+      o.setName("userid")
+        .setDescription("User ID to reset")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("trustwipe")
+    .setDescription("Wipe all saved trust scores (use with caution)."),
+
+  new SlashCommandBuilder()
     .setName("securitystatus")
     .setDescription("View overall security system status."),
 
@@ -883,7 +971,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     // -------------------
-    //  NEW SECURITY COMMANDS
+    //  TRUST COMMANDS
     // -------------------
 
     if (commandName === "trustscore") {
@@ -906,6 +994,127 @@ client.on("interactionCreate", async (interaction) => {
       });
       return;
     }
+
+    if (commandName === "trustadd") {
+      const amount = options.getInteger("amount");
+      const newScore = adjustTrust(userId, amount);
+      let userTag = "Unknown user";
+      try {
+        const u = await client.users.fetch(userId);
+        userTag = u.tag;
+      } catch {}
+
+      await interaction.reply({
+        content:
+          `✅ Added **${amount}** trust to \`${userTag}\` (\`${userId}\`).\n` +
+          `New trust score: \`${newScore}\`.`,
+        ephemeral: true
+      });
+
+      logChannel?.send(
+        `🟩 **Trust Score Increased**\n` +
+        `Target: ${userTag} (\`${userId}\`)\n` +
+        `Amount: +${amount}\n` +
+        `New Score: ${newScore}\n` +
+        `Staff: ${member.user.tag} (\`${member.id}\`)`
+      );
+      return;
+    }
+
+    if (commandName === "trustremove") {
+      const amount = options.getInteger("amount");
+      const newScore = adjustTrust(userId, -Math.abs(amount));
+      let userTag = "Unknown user";
+      try {
+        const u = await client.users.fetch(userId);
+        userTag = u.tag;
+      } catch {}
+
+      await interaction.reply({
+        content:
+          `✅ Removed **${amount}** trust from \`${userTag}\` (\`${userId}\`).\n` +
+          `New trust score: \`${newScore}\`.`,
+        ephemeral: true
+      });
+
+      logChannel?.send(
+        `🟥 **Trust Score Decreased**\n` +
+        `Target: ${userTag} (\`${userId}\`)\n` +
+        `Amount: -${amount}\n` +
+        `New Score: ${newScore}\n` +
+        `Staff: ${member.user.tag} (\`${member.id}\`)`
+      );
+      return;
+    }
+
+    if (commandName === "trustset") {
+      const value = options.getInteger("value");
+      const newScore = setTrust(userId, value);
+      let userTag = "Unknown user";
+      try {
+        const u = await client.users.fetch(userId);
+        userTag = u.tag;
+      } catch {}
+
+      await interaction.reply({
+        content:
+          `✅ Set trust score for \`${userTag}\` (\`${userId}\`) to \`${newScore}\`.`,
+        ephemeral: true
+      });
+
+      logChannel?.send(
+        `📝 **Trust Score Set**\n` +
+        `Target: ${userTag} (\`${userId}\`)\n` +
+        `New Score: ${newScore}\n` +
+        `Staff: ${member.user.tag} (\`${member.id}\`)`
+      );
+      return;
+    }
+
+    if (commandName === "trustreset") {
+      const newScore = setTrust(userId, 0);
+      let userTag = "Unknown user";
+      try {
+        const u = await client.users.fetch(userId);
+        userTag = u.tag;
+      } catch {}
+
+      await interaction.reply({
+        content:
+          `✅ Reset trust score for \`${userTag}\` (\`${userId}\`) to \`${newScore}\`.`,
+        ephemeral: true
+      });
+
+      logChannel?.send(
+        `♻️ **Trust Score Reset**\n` +
+        `Target: ${userTag} (\`${userId}\`)\n` +
+        `New Score: ${newScore}\n` +
+        `Staff: ${member.user.tag} (\`${member.id}\`)`
+      );
+      return;
+    }
+
+    if (commandName === "trustwipe") {
+      trustScores.clear();
+      saveTrust();
+
+      await interaction.reply({
+        content:
+          "⚠️ All stored trust scores have been wiped.\n" +
+          "Use this only after confirming with leadership.",
+        ephemeral: true
+      });
+
+      logChannel?.send(
+        `🧨 **All Trust Scores Wiped**\n` +
+        `Action by: ${member.user.tag} (\`${member.id}\`)`
+      );
+      return;
+    }
+
+    // -------------------
+    //  NEW SECURITY COMMANDS
+    // -------------------
 
     if (commandName === "securitystatus") {
       const g = guild;
@@ -1112,10 +1321,15 @@ client.on("interactionCreate", async (interaction) => {
             inline: false
           },
           {
-            name: "🔎 Monitoring & Investigation",
+            name: "🔎 Monitoring, Trust & Investigation",
             value: [
               "`/lookup <userid>` — Basic user info by ID",
               "`/trustscore <userid>` — View security trust score",
+              "`/trustadd <userid> <amount>` — Increase trust manually",
+              "`/trustremove <userid> <amount>` — Decrease trust manually",
+              "`/trustset <userid> <value>` — Set exact trust score",
+              "`/trustreset <userid>` — Reset trust back to 0",
+              "`/trustwipe` — Clear ALL stored trust scores",
               "`/checkalt <userid>` — Alt/risk check",
               "`/securitystatus` — Live security system status",
               "`/serverhealth` — Server security health overview"
