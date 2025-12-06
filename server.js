@@ -1,18 +1,17 @@
 // ==========================================
-//  BLOX & CO SECURITY BOT v9 (Upgraded)
+//  BLOX & CO SECURITY BOT v10 (Patched)
 //  - Softban / Hardware Ban / Lookup
 //  - Full Command Logging & Staff Gating
 //  - Anti-Raid, Anti-Nuke, Webhook Defense
 //  - Message Security & Trust System
 //  - Auto-Fix (Backups) & Staff Action Logs
-//  - Whitelist System
+//  - Whitelist System (IMMUNE ONLY)
 //  - Advanced Staff Commands:
 //      /trustscore, /trustadd, /trustremove,
 //      /trustset, /trustreset, /trustwipe,
 //      /securitystatus, /lockdown, /unlockdown,
 //      /checkalt, /serverhealth, /panic
-//  - Staff Help Command:
-//      /securityhelp
+//  - Staff Help Command: /securityhelp
 // ==========================================
 
 const express = require("express");
@@ -32,7 +31,7 @@ const {
   EmbedBuilder,
   PermissionsBitField,
   ChannelType,
-  AuditLogEvent
+  AuditLogEvent,
 } = require("discord.js");
 
 require("dotenv").config();
@@ -46,8 +45,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildBans,
     GatewayIntentBits.GuildWebhooks,
-    GatewayIntentBits.MessageContent
-  ]
+    GatewayIntentBits.MessageContent,
+  ],
 });
 
 const BOT_START_TIME = Date.now();
@@ -56,22 +55,23 @@ const BOT_START_TIME = Date.now();
 const GUILD_ID = "1381002127765278740";
 const OWNER_ID = "1350882351743500409";
 
+// STAFF ROLES (CAN USE COMMANDS)
 const STAFF_ROLES = [
   "1397546010317684786",
   "1381268185671667732",
   "1381268072828112896",
-  "1381268070248484944"
+  "1381268070248484944",
 ];
 
-// ---------- WHITELISTED ROLES (IMMUNE) ----------
+// WHITELIST ROLES (IMMUNE ONLY, NOT AUTO-STAFF)
 const ROLE_WHITELIST = [
-  "1381268070248484944",  // Group Handler
-  "1395479443300159778",  // Group Oversight
-  "1439267340549230765",  // Bot
-  "1381394820957868095",  // Bot
-  "1409181826165117003",  // Bot
-  "1381268072828112896",  // Development
-  "1381338812617326883"   // Bots
+  "1381268070248484944", // Group Handler
+  "1395479443300159778", // Group Oversight
+  "1439267340549230765", // Bot
+  "1381394820957868095", // Bot
+  "1409181826165117003", // Bot
+  "1381268072828112896", // Development
+  "1381338812617326883", // Bots
 ];
 
 function isWhitelisted(memberOrRole) {
@@ -84,7 +84,7 @@ function isWhitelisted(memberOrRole) {
 
   // GuildMember
   if (memberOrRole.roles) {
-    return memberOrRole.roles.cache.some(r => ROLE_WHITELIST.includes(r.id));
+    return memberOrRole.roles.cache.some((r) => ROLE_WHITELIST.includes(r.id));
   }
 
   return false;
@@ -103,7 +103,7 @@ const SECURITY_CONFIG = {
     PermissionsBitField.Flags.ManageChannels,
     PermissionsBitField.Flags.ManageWebhooks,
     PermissionsBitField.Flags.BanMembers,
-    PermissionsBitField.Flags.KickMembers
+    PermissionsBitField.Flags.KickMembers,
   ],
 
   raid: {
@@ -111,7 +111,7 @@ const SECURITY_CONFIG = {
     joinThreshold: 6,
     autoLock: true,
     autoUnlockMs: 5 * 60 * 1000,
-    lockdownSlowmodeSeconds: 10
+    lockdownSlowmodeSeconds: 10,
   },
 
   minAccountAgeMs: 3 * 24 * 60 * 60 * 1000, // 3 days
@@ -124,8 +124,8 @@ const SECURITY_CONFIG = {
 
   trust: {
     lowTrustThreshold: -30,
-    timeoutMs: 60 * 60 * 1000 // 1 hour
-  }
+    timeoutMs: 60 * 60 * 1000, // 1 hour
+  },
 };
 
 // ---------- FILE HANDLING ----------
@@ -133,18 +133,31 @@ const SOFTBAN_FILE = "./softbans.json";
 const HARDWARE_BAN_FILE = "./hardwarebans.json";
 const TRUST_FILE = "./trust.json";
 
-let softbannedUsers = new Set();
-let hardwareBans = [];
-let trustScores = new Map();
+// store as strings ONLY
+let softbannedUsers = new Set(); // Set<string>
+let hardwareBans = []; // string[]
+let trustScores = new Map(); // Map<string, number>
 
 if (fs.existsSync(SOFTBAN_FILE)) {
-  softbannedUsers = new Set(JSON.parse(fs.readFileSync(SOFTBAN_FILE)));
+  try {
+    const arr = JSON.parse(fs.readFileSync(SOFTBAN_FILE));
+    softbannedUsers = new Set(arr.map((id) => String(id)));
+  } catch (err) {
+    console.error("⚠️ Failed to load softbans.json:", err);
+    softbannedUsers = new Set();
+  }
 } else {
   fs.writeFileSync(SOFTBAN_FILE, "[]");
 }
 
 if (fs.existsSync(HARDWARE_BAN_FILE)) {
-  hardwareBans = JSON.parse(fs.readFileSync(HARDWARE_BAN_FILE));
+  try {
+    const arr = JSON.parse(fs.readFileSync(HARDWARE_BAN_FILE));
+    hardwareBans = arr.map((id) => String(id));
+  } catch (err) {
+    console.error("⚠️ Failed to load hardwarebans.json:", err);
+    hardwareBans = [];
+  }
 } else {
   fs.writeFileSync(HARDWARE_BAN_FILE, "[]");
 }
@@ -154,7 +167,7 @@ if (fs.existsSync(TRUST_FILE)) {
   try {
     const raw = JSON.parse(fs.readFileSync(TRUST_FILE));
     trustScores = new Map(
-      Object.entries(raw).map(([id, score]) => [id, Number(score) || 0])
+      Object.entries(raw).map(([id, score]) => [String(id), Number(score) || 0])
     );
   } catch (err) {
     console.error("⚠️ Failed to load trust.json, starting with empty trust map:", err);
@@ -164,12 +177,23 @@ if (fs.existsSync(TRUST_FILE)) {
   fs.writeFileSync(TRUST_FILE, "{}");
 }
 
+// normalize all IDs as strings
+function normalizeId(id) {
+  return String(id).trim();
+}
+
 function saveSoftbans() {
-  fs.writeFileSync(SOFTBAN_FILE, JSON.stringify([...softbannedUsers], null, 2));
+  fs.writeFileSync(
+    SOFTBAN_FILE,
+    JSON.stringify([...softbannedUsers], null, 2)
+  );
 }
 
 function saveHardwareBans() {
-  fs.writeFileSync(HARDWARE_BAN_FILE, JSON.stringify(hardwareBans, null, 2));
+  fs.writeFileSync(
+    HARDWARE_BAN_FILE,
+    JSON.stringify(hardwareBans, null, 2)
+  );
 }
 
 function saveTrust() {
@@ -181,17 +205,21 @@ function saveTrust() {
 }
 
 // ---------- PERMISSION CHECK ----------
+// STAFF ONLY. Whitelist is IMMUNE, not staff bypass.
 function hasPermission(member) {
   if (!member) return false;
+
+  // Owner bypass
   if (member.id === OWNER_ID) return true;
-  if (isWhitelisted(member)) return true;
-  return member.roles.cache.some(r => STAFF_ROLES.includes(r.id));
+
+  // Staff roles only
+  return member.roles.cache.some((r) => STAFF_ROLES.includes(r.id));
 }
 
 // ---------- SECURITY STATE ----------
-const joinHistory = new Map();
-const raidLockdowns = new Map();
-const messageHistory = new Map();
+const joinHistory = new Map(); // guildId -> [timestamps]
+const raidLockdowns = new Map(); // guildId -> bool
+const messageHistory = new Map(); // userId -> [timestamps]
 const backups = { roles: new Map(), channels: new Map() };
 
 function getLogChannel(guild) {
@@ -200,6 +228,7 @@ function getLogChannel(guild) {
 }
 
 function adjustTrust(userId, delta) {
+  userId = normalizeId(userId);
   const old = trustScores.get(userId) || 0;
   const next = old + delta;
   trustScores.set(userId, next);
@@ -208,6 +237,7 @@ function adjustTrust(userId, delta) {
 }
 
 function setTrust(userId, value) {
+  userId = normalizeId(userId);
   const v = Number(value) || 0;
   trustScores.set(userId, v);
   saveTrust();
@@ -215,6 +245,7 @@ function setTrust(userId, value) {
 }
 
 function getTrust(userId) {
+  userId = normalizeId(userId);
   return trustScores.get(userId) || 0;
 }
 
@@ -235,23 +266,23 @@ function formatDuration(ms) {
 // ---------- BACKUPS ----------
 async function backupGuildStructure(guild) {
   try {
-    const rolesData = guild.roles.cache.map(r => ({
+    const rolesData = guild.roles.cache.map((r) => ({
       id: r.id,
       name: r.name,
       color: r.color,
       hoist: r.hoist,
       position: r.position,
       permissions: r.permissions.bitfield,
-      mentionable: r.mentionable
+      mentionable: r.mentionable,
     }));
     backups.roles.set(guild.id, rolesData);
 
-    const channelsData = guild.channels.cache.map(c => ({
+    const channelsData = guild.channels.cache.map((c) => ({
       id: c.id,
       name: c.name,
       type: c.type,
       parentId: c.parentId,
-      position: c.position
+      position: c.position,
     }));
     backups.channels.set(guild.id, channelsData);
 
@@ -266,9 +297,9 @@ async function autoFixChannelDelete(channel) {
   const guild = channel.guild;
   const log = getLogChannel(guild);
 
-  const snapshot = (backups.channels.get(guild.id) || [])
-    .find(c => c.id === channel.id);
-
+  const snapshot = (backups.channels.get(guild.id) || []).find(
+    (c) => c.id === channel.id
+  );
   if (!snapshot) return;
 
   try {
@@ -276,17 +307,19 @@ async function autoFixChannelDelete(channel) {
       name: snapshot.name,
       type: snapshot.type,
       parent: snapshot.parentId,
-      position: snapshot.position
+      position: snapshot.position,
     });
 
     log?.send(
       `🛠️ **Channel Auto-Recreated**\n` +
-      `Old: #${channel.name} (\`${channel.id}\`)\n` +
-      `New: <#${newChan.id}> (\`${newChan.id}\`)`
+        `Old: #${channel.name} (\`${channel.id}\`)\n` +
+        `New: <#${newChan.id}> (\`${newChan.id}\`)`
     );
   } catch (err) {
     console.error("Auto-fix channel error:", err);
-    log?.send(`❌ Failed to auto-recreate deleted channel **#${channel.name}**.`);
+    log?.send(
+      `❌ Failed to auto-recreate deleted channel **#${channel.name}**.`
+    );
   }
 }
 
@@ -297,9 +330,9 @@ async function autoFixRoleDelete(role) {
   const guild = role.guild;
   const log = getLogChannel(guild);
 
-  const snapshot = (backups.roles.get(guild.id) || [])
-    .find(r => r.id === role.id);
-
+  const snapshot = (backups.roles.get(guild.id) || []).find(
+    (r) => r.id === role.id
+  );
   if (!snapshot) return;
 
   try {
@@ -308,19 +341,21 @@ async function autoFixRoleDelete(role) {
       color: snapshot.color,
       hoist: snapshot.hoist,
       permissions: snapshot.permissions,
-      mentionable: snapshot.mentionable
+      mentionable: snapshot.mentionable,
     });
 
     await newRole.setPosition(snapshot.position).catch(() => {});
 
     log?.send(
       `🛠️ **Role Auto-Recreated**\n` +
-      `Old: ${role.name} (\`${role.id}\`)\n` +
-      `New: ${newRole.name} (\`${newRole.id}\`)`
+        `Old: ${role.name} (\`${role.id}\`)\n` +
+        `New: ${newRole.name} (\`${newRole.id}\`)`
     );
   } catch (err) {
     console.error("Auto-fix role error:", err);
-    log?.send(`❌ Failed to auto-recreate deleted role **${role.name}**.`);
+    log?.send(
+      `❌ Failed to auto-recreate deleted role **${role.name}**.`
+    );
   }
 }
 
@@ -338,9 +373,11 @@ async function handleJoinSecurity(member) {
     const newTrust = adjustTrust(member.id, -20);
     log?.send(
       `⚠️ **Possible Alt Detected**\n` +
-      `User: ${member.user.tag} (\`${member.id}\`)\n` +
-      `Account age: <t:${Math.floor(member.user.createdTimestamp / 1000)}:R>\n` +
-      `Trust score: **${newTrust}**`
+        `User: ${member.user.tag} (\`${member.id}\`)\n` +
+        `Account age: <t:${Math.floor(
+          member.user.createdTimestamp / 1000
+        )}:R>\n` +
+        `Trust score: **${newTrust}**`
     );
   } else {
     adjustTrust(member.id, 5);
@@ -349,7 +386,7 @@ async function handleJoinSecurity(member) {
   // Raid detection
   let arr = joinHistory.get(guild.id) || [];
   arr.push(now);
-  arr = arr.filter(t => now - t <= SECURITY_CONFIG.raid.joinWindowMs);
+  arr = arr.filter((t) => now - t <= SECURITY_CONFIG.raid.joinWindowMs);
   joinHistory.set(guild.id, arr);
 
   if (
@@ -360,8 +397,10 @@ async function handleJoinSecurity(member) {
 
     log?.send(
       `🚨 **RAID DETECTED**\n` +
-      `Joins in last ${SECURITY_CONFIG.raid.joinWindowMs / 1000}s: **${arr.length}**\n` +
-      `Lockdown enabled.`
+        `Joins in last ${
+          SECURITY_CONFIG.raid.joinWindowMs / 1000
+        }s: **${arr.length}**\n` +
+        `Lockdown enabled.`
     );
 
     if (SECURITY_CONFIG.raid.autoLock) {
@@ -380,14 +419,17 @@ async function enableLockdown(guild, reason = "Manual lockdown") {
 
     try {
       await channel.permissionOverwrites.edit(everyone, {
-        SendMessages: false
+        SendMessages: false,
       });
 
-      ROLE_WHITELIST.forEach(id => {
-        channel.permissionOverwrites.edit(id, {
-          SendMessages: true
-        }).catch(() => {});
-      });
+      // allow whitelist to still speak
+      for (const id of ROLE_WHITELIST) {
+        channel.permissionOverwrites
+          .edit(id, {
+            SendMessages: true,
+          })
+          .catch(() => {});
+      }
 
       if (channel.type === ChannelType.GuildText) {
         await channel.setRateLimitPerUser(
@@ -412,7 +454,7 @@ async function disableLockdown(guild, reason = "Manual unlock") {
 
     try {
       await channel.permissionOverwrites.edit(everyone, {
-        SendMessages: null
+        SendMessages: null,
       });
 
       if (channel.type === ChannelType.GuildText) {
@@ -439,7 +481,7 @@ async function handleMessageSecurity(message) {
 
   let arr = messageHistory.get(message.author.id) || [];
   arr.push(now);
-  arr = arr.filter(t => now - t <= SECURITY_CONFIG.spam.windowMs);
+  arr = arr.filter((t) => now - t <= SECURITY_CONFIG.spam.windowMs);
   messageHistory.set(message.author.id, arr);
 
   const triggers = [];
@@ -460,8 +502,13 @@ async function handleMessageSecurity(message) {
   if (inviteRegex.test(message.content) && !hasPermission(message.member))
     triggers.push("Untrusted invite link");
 
-  const suspiciousPhrases = ["free nitro", "airdrop", "steamcommunity", "gift nitro"];
-  if (suspiciousPhrases.some(p => content.includes(p)))
+  const suspiciousPhrases = [
+    "free nitro",
+    "airdrop",
+    "steamcommunity",
+    "gift nitro",
+  ];
+  if (suspiciousPhrases.some((p) => content.includes(p)))
     triggers.push("Suspicious / scam phrase");
 
   if (triggers.length === 0) return;
@@ -481,14 +528,18 @@ async function handleMessageSecurity(message) {
         `**Channel:** ${message.channel} (\`${message.channel.id}\`)`,
         "",
         "Content:",
-        "```" + message.content.slice(0, 400) + "```"
+        "```" + message.content.slice(0, 400) + "```",
       ].join("\n")
     )
     .setTimestamp();
 
   log?.send({ embeds: [embed] });
 
-  if (newTrust <= SECURITY_CONFIG.trust.lowTrustThreshold && message.member && message.member.moderatable) {
+  if (
+    newTrust <= SECURITY_CONFIG.trust.lowTrustThreshold &&
+    message.member &&
+    message.member.moderatable
+  ) {
     try {
       await message.member.timeout(
         SECURITY_CONFIG.trust.timeoutMs,
@@ -496,8 +547,8 @@ async function handleMessageSecurity(message) {
       );
       log?.send(
         `⏳ **User Timed Out**\n` +
-        `User: ${message.author.tag} (\`${message.author.id}\`)\n` +
-        `Reason: Low trust after repeated security triggers.`
+          `User: ${message.author.tag} (\`${message.author.id}\`)\n` +
+          `Reason: Low trust after repeated security triggers.`
       );
     } catch {
       // ignore
@@ -512,8 +563,12 @@ async function handleRoleUpdate(oldRole, newRole) {
   const guild = newRole.guild;
   const log = getLogChannel(guild);
 
-  const oldDanger = SECURITY_CONFIG.dangerousPerms.some(p => oldRole.permissions.has(p));
-  const newDanger = SECURITY_CONFIG.dangerousPerms.some(p => newRole.permissions.has(p));
+  const oldDanger = SECURITY_CONFIG.dangerousPerms.some((p) =>
+    oldRole.permissions.has(p)
+  );
+  const newDanger = SECURITY_CONFIG.dangerousPerms.some((p) =>
+    newRole.permissions.has(p)
+  );
 
   if (!oldDanger && newDanger) {
     try {
@@ -524,8 +579,8 @@ async function handleRoleUpdate(oldRole, newRole) {
 
     log?.send(
       `🚫 **Permission Escalation Blocked**\n` +
-      `Role: ${newRole.name} (\`${newRole.id}\`)\n` +
-      `Dangerous permissions were added and automatically reverted.`
+        `Role: ${newRole.name} (\`${newRole.id}\`)\n` +
+        `Dangerous permissions were added and automatically reverted.`
     );
   }
 }
@@ -561,8 +616,8 @@ async function handleWebhookUpdate(channel) {
     if (deletedCount > 0) {
       log?.send(
         `🧹 **Webhook Cleanup**\n` +
-        `Channel: ${channel} (\`${channel.id}\`)\n` +
-        `Removed **${deletedCount}** non-whitelisted webhooks.`
+          `Channel: ${channel} (\`${channel.id}\`)\n` +
+          `Removed **${deletedCount}** non-whitelisted webhooks.`
       );
     }
   }
@@ -582,162 +637,222 @@ async function getAuditExecutor(guild, type, targetId) {
 }
 
 // ---------- SLASH COMMAND DEFINITIONS ----------
+// NOTE: setDMPermission(false) = no DMs
+// setDefaultMemberPermissions = hides from members without those perms
 const commands = [
   // Core moderation/bans
   new SlashCommandBuilder()
     .setName("softban")
     .setDescription("Softban a user (blocked from joining).")
-    .addStringOption(o =>
-      o.setName("userid")
+    .addStringOption((o) =>
+      o
+        .setName("userid")
         .setDescription("User ID to softban")
         .setRequired(true)
-    ),
+    )
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
 
   new SlashCommandBuilder()
     .setName("unsoftban")
     .setDescription("Remove a user from the softban list.")
-    .addStringOption(o =>
-      o.setName("userid")
+    .addStringOption((o) =>
+      o
+        .setName("userid")
         .setDescription("User ID to unsoftban")
         .setRequired(true)
-    ),
+    )
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
 
   new SlashCommandBuilder()
     .setName("softbanlist")
-    .setDescription("Display all softbanned users."),
+    .setDescription("Display all softbanned users.")
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
 
   new SlashCommandBuilder()
     .setName("hardwareban")
     .setDescription("Hardware-ban a user ID.")
-    .addStringOption(o =>
-      o.setName("userid")
+    .addStringOption((o) =>
+      o
+        .setName("userid")
         .setDescription("User ID to hardware-ban")
         .setRequired(true)
-    ),
+    )
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
 
   new SlashCommandBuilder()
     .setName("unhardwareban")
     .setDescription("Remove a hardware ban from a user.")
-    .addStringOption(o =>
-      o.setName("userid")
+    .addStringOption((o) =>
+      o
+        .setName("userid")
         .setDescription("User ID to remove from hardware ban")
         .setRequired(true)
-    ),
+    )
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
 
   new SlashCommandBuilder()
     .setName("hardwarebanlist")
-    .setDescription("Display all hardware bans."),
+    .setDescription("Display all hardware bans.")
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
 
   new SlashCommandBuilder()
     .setName("lookup")
     .setDescription("Lookup a Discord user by ID.")
-    .addStringOption(o =>
-      o.setName("userid")
+    .addStringOption((o) =>
+      o
+        .setName("userid")
         .setDescription("User ID to lookup")
         .setRequired(true)
-    ),
+    )
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ViewAuditLog),
 
   // New security tools
   new SlashCommandBuilder()
     .setName("trustscore")
     .setDescription("View a user's security trust score.")
-    .addStringOption(o =>
-      o.setName("userid")
+    .addStringOption((o) =>
+      o
+        .setName("userid")
         .setDescription("User ID to check trust score for")
         .setRequired(true)
-    ),
+    )
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
 
   new SlashCommandBuilder()
     .setName("trustadd")
     .setDescription("Increase a user's trust score.")
-    .addStringOption(o =>
-      o.setName("userid")
+    .addStringOption((o) =>
+      o
+        .setName("userid")
         .setDescription("User ID to modify")
         .setRequired(true)
     )
-    .addIntegerOption(o =>
-      o.setName("amount")
+    .addIntegerOption((o) =>
+      o
+        .setName("amount")
         .setDescription("Amount to add (e.g. 5, 10, 20)")
         .setRequired(true)
-    ),
+    )
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
 
   new SlashCommandBuilder()
     .setName("trustremove")
     .setDescription("Decrease a user's trust score.")
-    .addStringOption(o =>
-      o.setName("userid")
+    .addStringOption((o) =>
+      o
+        .setName("userid")
         .setDescription("User ID to modify")
         .setRequired(true)
     )
-    .addIntegerOption(o =>
-      o.setName("amount")
+    .addIntegerOption((o) =>
+      o
+        .setName("amount")
         .setDescription("Amount to remove (e.g. 5, 10, 20)")
         .setRequired(true)
-    ),
+    )
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
 
   new SlashCommandBuilder()
     .setName("trustset")
     .setDescription("Set a user's trust score to a specific value.")
-    .addStringOption(o =>
-      o.setName("userid")
+    .addStringOption((o) =>
+      o
+        .setName("userid")
         .setDescription("User ID to modify")
         .setRequired(true)
     )
-    .addIntegerOption(o =>
-      o.setName("value")
+    .addIntegerOption((o) =>
+      o
+        .setName("value")
         .setDescription("Exact trust value (can be negative)")
         .setRequired(true)
-    ),
+    )
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
 
   new SlashCommandBuilder()
     .setName("trustreset")
     .setDescription("Reset a user's trust score back to 0.")
-    .addStringOption(o =>
-      o.setName("userid")
+    .addStringOption((o) =>
+      o
+        .setName("userid")
         .setDescription("User ID to reset")
         .setRequired(true)
-    ),
+    )
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
 
   new SlashCommandBuilder()
     .setName("trustwipe")
-    .setDescription("Wipe all saved trust scores (use with caution)."),
+    .setDescription("Wipe all saved trust scores (use with caution).")
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
   new SlashCommandBuilder()
     .setName("securitystatus")
-    .setDescription("View overall security system status."),
+    .setDescription("View overall security system status.")
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild),
 
   new SlashCommandBuilder()
     .setName("lockdown")
-    .setDescription("Enable raid lockdown mode (manual)."),
+    .setDescription("Enable raid lockdown mode (manual).")
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageChannels),
 
   new SlashCommandBuilder()
     .setName("unlockdown")
-    .setDescription("Disable raid lockdown mode (manual)."),
+    .setDescription("Disable raid lockdown mode (manual).")
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageChannels),
 
   new SlashCommandBuilder()
     .setName("checkalt")
     .setDescription("Check if a user looks like an alt.")
-    .addStringOption(o =>
-      o.setName("userid")
+    .addStringOption((o) =>
+      o
+        .setName("userid")
         .setDescription("User ID to analyze")
         .setRequired(true)
-    ),
+    )
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
 
   new SlashCommandBuilder()
     .setName("serverhealth")
-    .setDescription("View server security health overview."),
+    .setDescription("View server security health overview.")
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild),
 
   new SlashCommandBuilder()
     .setName("panic")
-    .setDescription("Emergency: lockdown + aggressive webhook defense (5m cooldown)."),
+    .setDescription(
+      "Emergency: lockdown + aggressive webhook defense (5m cooldown)."
+    )
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
   // Staff help menu
   new SlashCommandBuilder()
     .setName("securityhelp")
     .setDescription("Show all security bot commands and categories.")
-].map(cmd => cmd.toJSON());
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
+].map((cmd) => cmd.toJSON());
 
-const rest = new REST({ version: "10" }).setToken(process.env.SECURITY_BOT_TOKEN);
+const rest = new REST({ version: "10" }).setToken(
+  process.env.SECURITY_BOT_TOKEN
+);
 
 // ---------- PANIC COOLDOWN ----------
 const PANIC_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
@@ -756,7 +871,7 @@ client.on("ready", async () => {
 
   client.user.setPresence({
     activities: [{ name: "Blox & Co Security" }],
-    status: "online"
+    status: "online",
   });
 
   const guild = client.guilds.cache.get(GUILD_ID);
@@ -772,6 +887,7 @@ client.on("ready", async () => {
 // ---------- AUTO-KICK + RAID/ALT SECURITY ----------
 client.on("guildMemberAdd", async (member) => {
   const log = member.guild.channels.cache.get(LOG_CHANNEL_ID);
+  const memberId = normalizeId(member.id);
 
   if (isWhitelisted(member)) {
     return log?.send(
@@ -779,14 +895,14 @@ client.on("guildMemberAdd", async (member) => {
     );
   }
 
-  if (softbannedUsers.has(member.id)) {
+  if (softbannedUsers.has(memberId)) {
     await member.kick("Softbanned.");
     return log?.send(
       `🚫 **Softbanned user attempted to join:** ${member.user.tag} (\`${member.id}\`)`
     );
   }
 
-  if (hardwareBans.includes(member.id)) {
+  if (hardwareBans.includes(memberId)) {
     await member.kick("Hardware banned.");
     return log?.send(
       `🔨 **Hardware-Banned user attempted to join:** ${member.user.tag} (\`${member.id}\`)`
@@ -804,7 +920,7 @@ client.on("interactionCreate", async (interaction) => {
   const logChannel = client.channels.cache.get(LOG_CHANNEL_ID);
 
   const args = [];
-  options?._hoistedOptions?.forEach(opt => {
+  options?._hoistedOptions?.forEach((opt) => {
     args.push(`${opt.name}: ${opt.value}`);
   });
 
@@ -812,16 +928,16 @@ client.on("interactionCreate", async (interaction) => {
 
   logChannel?.send(
     `📘 **Command Used**\n` +
-    `**User:** ${member.user.tag} (\`${member.id}\`)\n` +
-    `**Command:** /${commandName}\n` +
-    `**Arguments:** ${argString}\n` +
-    `**Timestamp:** <t:${Math.floor(Date.now() / 1000)}:F>`
+      `**User:** ${member.user.tag} (\`${member.id}\`)\n` +
+      `**Command:** /${commandName}\n` +
+      `**Arguments:** ${argString}\n` +
+      `**Timestamp:** <t:${Math.floor(Date.now() / 1000)}:F>`
   );
 
   if (!hasPermission(member)) {
     logChannel?.send(
       `⚠️ **Permission Denied**\n` +
-      `User: ${member.user.tag} attempted **/${commandName}**`
+        `User: ${member.user.tag} attempted **/${commandName}**`
     );
 
     return interaction.reply({
@@ -830,7 +946,8 @@ client.on("interactionCreate", async (interaction) => {
     });
   }
 
-  const userId = options.getString("userid");
+  const userIdRaw = options.getString("userid");
+  const userId = userIdRaw ? normalizeId(userIdRaw) : null;
 
   try {
     // -------------------
@@ -838,6 +955,14 @@ client.on("interactionCreate", async (interaction) => {
     // -------------------
 
     if (commandName === "lookup") {
+      if (!userId) {
+        await interaction.reply({
+          content: "❌ You must provide a valid user ID.",
+          ephemeral: true,
+        });
+        return;
+      }
+
       try {
         const user = await client.users.fetch(userId);
 
@@ -869,9 +994,21 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (commandName === "softban") {
+      if (!userId) {
+        await interaction.reply({
+          content: "❌ You must provide a user ID.",
+          ephemeral: true,
+        });
+        return;
+      }
+
       softbannedUsers.add(userId);
       saveSoftbans();
-      await interaction.reply({ content: `🔒 Softbanned **${userId}**.`, ephemeral: true });
+
+      await interaction.reply({
+        content: `🔒 Softbanned **${userId}**.`,
+        ephemeral: true,
+      });
 
       logChannel?.send(
         `🟥 **Softban Added**\nUser ID: \`${userId}\`\nStaff: ${member.user.tag}`
@@ -880,8 +1017,19 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (commandName === "unsoftban") {
+      if (!userId) {
+        await interaction.reply({
+          content: "❌ You must provide a user ID.",
+          ephemeral: true,
+        });
+        return;
+      }
+
       if (!softbannedUsers.has(userId)) {
-        await interaction.reply({ content: "⚠️ User is not softbanned.", ephemeral: true });
+        await interaction.reply({
+          content: "⚠️ User is not softbanned.",
+          ephemeral: true,
+        });
 
         logChannel?.send(
           `🔸 **Unsoftban Failed** — Not Banned\nUser: \`${userId}\``
@@ -891,7 +1039,11 @@ client.on("interactionCreate", async (interaction) => {
 
       softbannedUsers.delete(userId);
       saveSoftbans();
-      await interaction.reply({ content: `🔓 Softban removed for **${userId}**.`, ephemeral: true });
+
+      await interaction.reply({
+        content: `🔓 Softban removed for **${userId}**.`,
+        ephemeral: true,
+      });
 
       logChannel?.send(
         `🟩 **Softban Removed**\nUser: \`${userId}\`\nStaff: ${member.user.tag}`
@@ -906,8 +1058,10 @@ client.on("interactionCreate", async (interaction) => {
         content:
           list.length === 0
             ? "📜 No softbanned users."
-            : `📜 Softbanned Users:\n${list.map(id => `• \`${id}\``).join("\n")}`,
-        ephemeral: true
+            : `📜 Softbanned Users:\n${list
+                .map((id) => `• \`${id}\``)
+                .join("\n")}`,
+        ephemeral: true,
       });
 
       logChannel?.send(`📄 **Softban List Viewed** by ${member.user.tag}`);
@@ -915,8 +1069,19 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (commandName === "hardwareban") {
+      if (!userId) {
+        await interaction.reply({
+          content: "❌ You must provide a user ID.",
+          ephemeral: true,
+        });
+        return;
+      }
+
       if (hardwareBans.includes(userId)) {
-        await interaction.reply({ content: "⚠️ Already hardware banned.", ephemeral: true });
+        await interaction.reply({
+          content: "⚠️ Already hardware banned.",
+          ephemeral: true,
+        });
 
         logChannel?.send(
           `🔸 **Hardware Ban Failed** — Already Banned\nUser: \`${userId}\``
@@ -926,7 +1091,11 @@ client.on("interactionCreate", async (interaction) => {
 
       hardwareBans.push(userId);
       saveHardwareBans();
-      await interaction.reply({ content: `🔨 Hardware banned **${userId}**.`, ephemeral: true });
+
+      await interaction.reply({
+        content: `🔨 Hardware banned **${userId}**.`,
+        ephemeral: true,
+      });
 
       logChannel?.send(
         `🟥 **Hardware Ban Added**\nUser: \`${userId}\`\nStaff: ${member.user.tag}`
@@ -935,8 +1104,19 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (commandName === "unhardwareban") {
+      if (!userId) {
+        await interaction.reply({
+          content: "❌ You must provide a user ID.",
+          ephemeral: true,
+        });
+        return;
+      }
+
       if (!hardwareBans.includes(userId)) {
-        await interaction.reply({ content: "⚠️ User is not hardware banned.", ephemeral: true });
+        await interaction.reply({
+          content: "⚠️ User is not hardware banned.",
+          ephemeral: true,
+        });
 
         logChannel?.send(
           `🔸 **Unhardwareban Failed** — Not Banned\nUser: \`${userId}\``
@@ -944,10 +1124,13 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
 
-      hardwareBans = hardwareBans.filter(id => id !== userId);
+      hardwareBans = hardwareBans.filter((id) => id !== userId);
       saveHardwareBans();
 
-      await interaction.reply({ content: `🔓 Hardware ban removed for **${userId}**.`, ephemeral: true });
+      await interaction.reply({
+        content: `🔓 Hardware ban removed for **${userId}**.`,
+        ephemeral: true,
+      });
 
       logChannel?.send(
         `🟩 **Hardware Ban Removed**\nUser: \`${userId}\`\nStaff: ${member.user.tag}`
@@ -960,8 +1143,10 @@ client.on("interactionCreate", async (interaction) => {
         content:
           hardwareBans.length === 0
             ? "📜 No hardware bans."
-            : `📜 Hardware Bans:\n${hardwareBans.map(id => `• \`${id}\``).join("\n")}`,
-        ephemeral: true
+            : `📜 Hardware Bans:\n${hardwareBans
+                .map((id) => `• \`${id}\``)
+                .join("\n")}`,
+        ephemeral: true,
       });
 
       logChannel?.send(
@@ -975,6 +1160,14 @@ client.on("interactionCreate", async (interaction) => {
     // -------------------
 
     if (commandName === "trustscore") {
+      if (!userId) {
+        await interaction.reply({
+          content: "❌ You must provide a user ID.",
+          ephemeral: true,
+        });
+        return;
+      }
+
       const score = getTrust(userId);
       let userTag = "Unknown user";
 
@@ -990,12 +1183,20 @@ client.on("interactionCreate", async (interaction) => {
           `🔎 **Trust Score for \`${userTag}\` (\`${userId}\`):**\n` +
           `\`\`\`${score}\`\`\`\n` +
           `Higher = more trusted. Negative = repeatedly flagged.`,
-        ephemeral: true
+        ephemeral: true,
       });
       return;
     }
 
     if (commandName === "trustadd") {
+      if (!userId) {
+        await interaction.reply({
+          content: "❌ You must provide a user ID.",
+          ephemeral: true,
+        });
+        return;
+      }
+
       const amount = options.getInteger("amount");
       const newScore = adjustTrust(userId, amount);
       let userTag = "Unknown user";
@@ -1008,20 +1209,28 @@ client.on("interactionCreate", async (interaction) => {
         content:
           `✅ Added **${amount}** trust to \`${userTag}\` (\`${userId}\`).\n` +
           `New trust score: \`${newScore}\`.`,
-        ephemeral: true
+        ephemeral: true,
       });
 
       logChannel?.send(
         `🟩 **Trust Score Increased**\n` +
-        `Target: ${userTag} (\`${userId}\`)\n` +
-        `Amount: +${amount}\n` +
-        `New Score: ${newScore}\n` +
-        `Staff: ${member.user.tag} (\`${member.id}\`)`
+          `Target: ${userTag} (\`${userId}\`)\n` +
+          `Amount: +${amount}\n` +
+          `New Score: ${newScore}\n` +
+          `Staff: ${member.user.tag} (\`${member.id}\`)`
       );
       return;
     }
 
     if (commandName === "trustremove") {
+      if (!userId) {
+        await interaction.reply({
+          content: "❌ You must provide a user ID.",
+          ephemeral: true,
+        });
+        return;
+      }
+
       const amount = options.getInteger("amount");
       const newScore = adjustTrust(userId, -Math.abs(amount));
       let userTag = "Unknown user";
@@ -1034,20 +1243,28 @@ client.on("interactionCreate", async (interaction) => {
         content:
           `✅ Removed **${amount}** trust from \`${userTag}\` (\`${userId}\`).\n` +
           `New trust score: \`${newScore}\`.`,
-        ephemeral: true
+        ephemeral: true,
       });
 
       logChannel?.send(
         `🟥 **Trust Score Decreased**\n` +
-        `Target: ${userTag} (\`${userId}\`)\n` +
-        `Amount: -${amount}\n` +
-        `New Score: ${newScore}\n` +
-        `Staff: ${member.user.tag} (\`${member.id}\`)`
+          `Target: ${userTag} (\`${userId}\`)\n` +
+          `Amount: -${amount}\n` +
+          `New Score: ${newScore}\n` +
+          `Staff: ${member.user.tag} (\`${member.id}\`)`
       );
       return;
     }
 
     if (commandName === "trustset") {
+      if (!userId) {
+        await interaction.reply({
+          content: "❌ You must provide a user ID.",
+          ephemeral: true,
+        });
+        return;
+      }
+
       const value = options.getInteger("value");
       const newScore = setTrust(userId, value);
       let userTag = "Unknown user";
@@ -1059,19 +1276,27 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.reply({
         content:
           `✅ Set trust score for \`${userTag}\` (\`${userId}\`) to \`${newScore}\`.`,
-        ephemeral: true
+        ephemeral: true,
       });
 
       logChannel?.send(
         `📝 **Trust Score Set**\n` +
-        `Target: ${userTag} (\`${userId}\`)\n` +
-        `New Score: ${newScore}\n` +
-        `Staff: ${member.user.tag} (\`${member.id}\`)`
+          `Target: ${userTag} (\`${userId}\`)\n` +
+          `New Score: ${newScore}\n` +
+          `Staff: ${member.user.tag} (\`${member.id}\`)`
       );
       return;
     }
 
     if (commandName === "trustreset") {
+      if (!userId) {
+        await interaction.reply({
+          content: "❌ You must provide a user ID.",
+          ephemeral: true,
+        });
+        return;
+      }
+
       const newScore = setTrust(userId, 0);
       let userTag = "Unknown user";
       try {
@@ -1082,14 +1307,14 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.reply({
         content:
           `✅ Reset trust score for \`${userTag}\` (\`${userId}\`) to \`${newScore}\`.`,
-        ephemeral: true
+        ephemeral: true,
       });
 
       logChannel?.send(
         `♻️ **Trust Score Reset**\n` +
-        `Target: ${userTag} (\`${userId}\`)\n` +
-        `New Score: ${newScore}\n` +
-        `Staff: ${member.user.tag} (\`${member.id}\`)`
+          `Target: ${userTag} (\`${userId}\`)\n` +
+          `New Score: ${newScore}\n` +
+          `Staff: ${member.user.tag} (\`${member.id}\`)`
       );
       return;
     }
@@ -1102,12 +1327,12 @@ client.on("interactionCreate", async (interaction) => {
         content:
           "⚠️ All stored trust scores have been wiped.\n" +
           "Use this only after confirming with leadership.",
-        ephemeral: true
+        ephemeral: true,
       });
 
       logChannel?.send(
         `🧨 **All Trust Scores Wiped**\n` +
-        `Action by: ${member.user.tag} (\`${member.id}\`)`
+          `Action by: ${member.user.tag} (\`${member.id}\`)`
       );
       return;
     }
@@ -1120,17 +1345,39 @@ client.on("interactionCreate", async (interaction) => {
       const g = guild;
       const isLocked = raidLockdowns.get(g.id) || false;
       const joinsArray = joinHistory.get(g.id) || [];
-      const recentJoins = joinsArray.filter(t => Date.now() - t <= SECURITY_CONFIG.raid.joinWindowMs).length;
+      const recentJoins = joinsArray.filter(
+        (t) => Date.now() - t <= SECURITY_CONFIG.raid.joinWindowMs
+      ).length;
 
       const embed = new EmbedBuilder()
         .setTitle("🛡️ Security Status")
         .setColor("#2b2d31")
         .addFields(
-          { name: "Lockdown", value: isLocked ? "🔴 ACTIVE" : "🟢 Inactive", inline: true },
-          { name: "Recent Joins Window", value: `${recentJoins} joins`, inline: true },
-          { name: "Softbans", value: `${softbannedUsers.size}`, inline: true },
-          { name: "Hardware Bans", value: `${hardwareBans.length}`, inline: true },
-          { name: "Bot Uptime", value: formatDuration(Date.now() - BOT_START_TIME), inline: true }
+          {
+            name: "Lockdown",
+            value: isLocked ? "🔴 ACTIVE" : "🟢 Inactive",
+            inline: true,
+          },
+          {
+            name: "Recent Joins Window",
+            value: `${recentJoins} joins`,
+            inline: true,
+          },
+          {
+            name: "Softbans",
+            value: `${softbannedUsers.size}`,
+            inline: true,
+          },
+          {
+            name: "Hardware Bans",
+            value: `${hardwareBans.length}`,
+            inline: true,
+          },
+          {
+            name: "Bot Uptime",
+            value: formatDuration(Date.now() - BOT_START_TIME),
+            inline: true,
+          }
         )
         .setTimestamp();
 
@@ -1139,24 +1386,38 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (commandName === "lockdown") {
-      await enableLockdown(guild, `Manual /lockdown by ${member.user.tag}`);
+      await enableLockdown(
+        guild,
+        `Manual /lockdown by ${member.user.tag}`
+      );
       await interaction.reply({
         content: "🔒 Lockdown enabled. Only whitelisted roles can speak.",
-        ephemeral: true
+        ephemeral: true,
       });
       return;
     }
 
     if (commandName === "unlockdown") {
-      await disableLockdown(guild, `Manual /unlockdown by ${member.user.tag}`);
+      await disableLockdown(
+        guild,
+        `Manual /unlockdown by ${member.user.tag}`
+      );
       await interaction.reply({
         content: "✅ Lockdown disabled. Chat restored.",
-        ephemeral: true
+        ephemeral: true,
       });
       return;
     }
 
     if (commandName === "checkalt") {
+      if (!userId) {
+        await interaction.reply({
+          content: "❌ You must provide a user ID.",
+          ephemeral: true,
+        });
+        return;
+      }
+
       try {
         const user = await client.users.fetch(userId);
         const now = Date.now();
@@ -1173,10 +1434,28 @@ client.on("interactionCreate", async (interaction) => {
           .setTitle("🧪 Alt Check")
           .setColor("#2b2d31")
           .addFields(
-            { name: "User", value: `${user.tag} (\`${user.id}\`)`, inline: false },
-            { name: "Account Created", value: `<t:${Math.floor(user.createdTimestamp / 1000)}:F>`, inline: true },
-            { name: "Account Age (approx.)", value: `${ageDays.toFixed(1)} days`, inline: true },
-            { name: "Trust Score", value: `${score}`, inline: true },
+            {
+              name: "User",
+              value: `${user.tag} (\`${user.id}\`)`,
+              inline: false,
+            },
+            {
+              name: "Account Created",
+              value: `<t:${Math.floor(
+                user.createdTimestamp / 1000
+              )}:F>`,
+              inline: true,
+            },
+            {
+              name: "Account Age (approx.)",
+              value: `${ageDays.toFixed(1)} days`,
+              inline: true,
+            },
+            {
+              name: "Trust Score",
+              value: `${score}`,
+              inline: true,
+            },
             { name: "Risk Level", value: risk, inline: false }
           )
           .setThumbnail(user.displayAvatarURL())
@@ -1186,7 +1465,7 @@ client.on("interactionCreate", async (interaction) => {
       } catch {
         await interaction.reply({
           content: "❌ Could not fetch that user ID.",
-          ephemeral: true
+          ephemeral: true,
         });
       }
       return;
@@ -1200,25 +1479,44 @@ client.on("interactionCreate", async (interaction) => {
       let humans = 0;
 
       try {
-        g.members.cache.forEach(m => {
-          if (m.user.bot) bots++; else humans++;
+        g.members.cache.forEach((m) => {
+          if (m.user.bot) bots++;
+          else humans++;
         });
       } catch {
         // ignore
       }
 
-      const negativeTrustCount = Array.from(trustScores.values()).filter(v => v < 0).length;
+      const negativeTrustCount = Array.from(trustScores.values()).filter(
+        (v) => v < 0
+      ).length;
 
       const embed = new EmbedBuilder()
         .setTitle("📊 Server Health")
         .setColor("#2b2d31")
         .addFields(
-          { name: "Total Members", value: `${totalMembers}`, inline: true },
+          {
+            name: "Total Members",
+            value: `${totalMembers}`,
+            inline: true,
+          },
           { name: "Humans", value: `${humans}`, inline: true },
           { name: "Bots", value: `${bots}`, inline: true },
-          { name: "Members Flagged (Low Trust)", value: `${negativeTrustCount}`, inline: true },
-          { name: "Softbans", value: `${softbannedUsers.size}`, inline: true },
-          { name: "Hardware Bans", value: `${hardwareBans.length}`, inline: true }
+          {
+            name: "Members Flagged (Low Trust)",
+            value: `${negativeTrustCount}`,
+            inline: true,
+          },
+          {
+            name: "Softbans",
+            value: `${softbannedUsers.size}`,
+            inline: true,
+          },
+          {
+            name: "Hardware Bans",
+            value: `${hardwareBans.length}`,
+            inline: true,
+          }
         )
         .setTimestamp();
 
@@ -1226,7 +1524,7 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // /panic with 5-minute cooldown (disable-webhooks style)
+    // /panic with 5-minute cooldown
     if (commandName === "panic") {
       const now = Date.now();
       const elapsed = now - lastPanicTimestamp;
@@ -1240,7 +1538,7 @@ client.on("interactionCreate", async (interaction) => {
           content:
             `❌ Panic mode is on cooldown.\n` +
             `Try again in **${minutes}m ${seconds}s**.`,
-          ephemeral: true
+          ephemeral: true,
         });
 
         logChannel?.send(
@@ -1282,9 +1580,9 @@ client.on("interactionCreate", async (interaction) => {
 
       log?.send(
         `🚨 **PANIC MODE ACTIVATED**\n` +
-        `Invoker: ${member.user.tag} (\`${member.id}\`)\n` +
-        `Webhooks removed: **${totalDeleted}**\n` +
-        `Cooldown: 5 minutes`
+          `Invoker: ${member.user.tag} (\`${member.id}\`)\n` +
+          `Webhooks removed: **${totalDeleted}**\n` +
+          `Cooldown: 5 minutes`
       );
 
       await interaction.reply({
@@ -1293,8 +1591,8 @@ client.on("interactionCreate", async (interaction) => {
           "- Lockdown ON\n" +
           "- Non-whitelisted webhooks removed\n" +
           "- 5-minute global cooldown applied\n" +
-          "Check #logs for more details.",
-        ephemeral: true
+          "Check logs for more details.",
+        ephemeral: true,
       });
       return;
     }
@@ -1316,9 +1614,9 @@ client.on("interactionCreate", async (interaction) => {
               "`/softbanlist` — List softbanned IDs",
               "`/hardwareban <userid>` — Strong ban (auto-kick on join)",
               "`/unhardwareban <userid>` — Remove hardware ban",
-              "`/hardwarebanlist` — List hardware bans"
+              "`/hardwarebanlist` — List hardware bans",
             ].join("\n"),
-            inline: false
+            inline: false,
           },
           {
             name: "🔎 Monitoring, Trust & Investigation",
@@ -1332,25 +1630,25 @@ client.on("interactionCreate", async (interaction) => {
               "`/trustwipe` — Clear ALL stored trust scores",
               "`/checkalt <userid>` — Alt/risk check",
               "`/securitystatus` — Live security system status",
-              "`/serverhealth` — Server security health overview"
+              "`/serverhealth` — Server security health overview",
             ].join("\n"),
-            inline: false
+            inline: false,
           },
           {
             name: "🚨 Emergency Controls",
             value: [
               "`/lockdown` — Manually enable lockdown",
               "`/unlockdown` — Manually disable lockdown",
-              "`/panic` — Emergency lockdown + webhook cleanup *(5m cooldown)*"
+              "`/panic` — Emergency lockdown + webhook cleanup *(5m cooldown)*",
             ].join("\n"),
-            inline: false
+            inline: false,
           },
           {
             name: "ℹ Notes",
             value:
               "- Whitelisted roles are **immune** to automatic punishments.\n" +
               "- All commands are logged in the security log channel.\n" +
-              "- Use `/panic` only in real emergencies."
+              "- Use `/panic` only in real emergencies.",
           }
         )
         .setTimestamp();
@@ -1358,20 +1656,20 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-
   } catch (err) {
     console.error("❌ Command Error:", err);
 
     logChannel?.send(
       `🔴 **Command Error**\n` +
-      `Command: /${commandName}\n` +
-      `User: ${member.user.tag} (\`${member.id}\`)\n` +
-      `Error: \`${err.message}\``
+        `Command: /${commandName}\n` +
+        `User: ${member.user.tag} (\`${member.id}\`)\n` +
+        `Error: \`${err.message}\``
     );
 
     if (!interaction.replied) {
       await interaction.reply({
-        content: "❌ An unexpected error occurred while running that command.",
+        content:
+          "❌ An unexpected error occurred while running that command.",
         ephemeral: true,
       });
     }
@@ -1391,12 +1689,18 @@ client.on("roleUpdate", (oldRole, newRole) => {
 client.on("roleDelete", async (role) => {
   const guild = role.guild;
   const logChannel = getLogChannel(guild);
-  const executor = await getAuditExecutor(guild, AuditLogEvent.RoleDelete, role.id);
+  const executor = await getAuditExecutor(
+    guild,
+    AuditLogEvent.RoleDelete,
+    role.id
+  );
 
   logChannel?.send(
     `⚠️ **Role Deleted**\n` +
-    `Role: ${role.name} (\`${role.id}\`)\n` +
-    `Executor: ${executor ? `${executor.tag} (\`${executor.id}\`)` : "Unknown"}`
+      `Role: ${role.name} (\`${role.id}\`)\n` +
+      `Executor: ${
+        executor ? `${executor.tag} (\`${executor.id}\`)` : "Unknown"
+      }`
   );
 
   await autoFixRoleDelete(role);
@@ -1405,12 +1709,18 @@ client.on("roleDelete", async (role) => {
 client.on("channelDelete", async (channel) => {
   const guild = channel.guild;
   const logChannel = getLogChannel(guild);
-  const executor = await getAuditExecutor(guild, AuditLogEvent.ChannelDelete, channel.id);
+  const executor = await getAuditExecutor(
+    guild,
+    AuditLogEvent.ChannelDelete,
+    channel.id
+  );
 
   logChannel?.send(
     `⚠️ **Channel Deleted**\n` +
-    `Channel: #${channel.name} (\`${channel.id}\`)\n` +
-    `Executor: ${executor ? `${executor.tag} (\`${executor.id}\`)` : "Unknown"}`
+      `Channel: #${channel.name} (\`${channel.id}\`)\n` +
+      `Executor: ${
+        executor ? `${executor.tag} (\`${executor.id}\`)` : "Unknown"
+      }`
   );
 
   await autoFixChannelDelete(channel);
@@ -1423,24 +1733,36 @@ client.on("webhooksUpdate", async (channel) => {
 client.on("guildBanAdd", async (ban) => {
   const guild = ban.guild;
   const logChannel = getLogChannel(guild);
-  const executor = await getAuditExecutor(guild, AuditLogEvent.MemberBanAdd, ban.user.id);
+  const executor = await getAuditExecutor(
+    guild,
+    AuditLogEvent.MemberBanAdd,
+    ban.user.id
+  );
 
   logChannel?.send(
     `🔨 **User Banned**\n` +
-    `User: ${ban.user.tag} (\`${ban.user.id}\`)\n` +
-    `Executor: ${executor ? `${executor.tag} (\`${executor.id}\`)` : "Unknown"}`
+      `User: ${ban.user.tag} (\`${ban.user.id}\`)\n` +
+      `Executor: ${
+        executor ? `${executor.tag} (\`${executor.id}\`)` : "Unknown"
+      }`
   );
 });
 
 client.on("guildBanRemove", async (ban) => {
   const guild = ban.guild;
   const logChannel = getLogChannel(guild);
-  const executor = await getAuditExecutor(guild, AuditLogEvent.MemberBanRemove, ban.user.id);
+  const executor = await getAuditExecutor(
+    guild,
+    AuditLogEvent.MemberBanRemove,
+    ban.user.id
+  );
 
   logChannel?.send(
     `♻️ **User Unbanned**\n` +
-    `User: ${ban.user.tag} (\`${ban.user.id}\`)\n` +
-    `Executor: ${executor ? `${executor.tag} (\`${executor.id}\`)` : "Unknown"}`
+      `User: ${ban.user.tag} (\`${ban.user.id}\`)\n` +
+      `Executor: ${
+        executor ? `${executor.tag} (\`${executor.id}\`)` : "Unknown"
+      }`
   );
 });
 
