@@ -409,48 +409,112 @@ async function handleJoinSecurity(member) {
   }
 }
 
-// ---------- LOCKDOWN HELPERS ----------
+// ---------- LOCKDOWN HELPERS (OPTION C: FALLBACK ROLE-LEVEL) ----------
 async function enableLockdown(guild, reason = "Manual lockdown") {
   const log = getLogChannel(guild);
   const everyone = guild.roles.everyone;
 
+  let channelFailures = 0;
+
   for (const [, channel] of guild.channels.cache) {
-    if (!channel.manageable || !channel.isTextBased()) continue;
+    if (!channel.isTextBased()) continue;
 
     try {
-      await channel.permissionOverwrites.edit(everyone, {
-        SendMessages: false,
-      });
+      if (!channel.viewable) {
+        channelFailures++;
+        continue;
+      }
 
-      // allow whitelist to still speak
+      if (channel.manageable) {
+        // Per-channel lockdown
+        await channel.permissionOverwrites.edit(everyone, {
+          SendMessages: false,
+        });
+
+        // Allow whitelist roles to still speak in lockdown channels
+        for (const id of ROLE_WHITELIST) {
+          await channel.permissionOverwrites
+            .edit(id, { SendMessages: true })
+            .catch(() => {});
+        }
+
+        if (channel.type === ChannelType.GuildText) {
+          await channel
+            .setRateLimitPerUser(SECURITY_CONFIG.raid.lockdownSlowmodeSeconds)
+            .catch(() => {});
+        }
+      } else {
+        // Can't manage this channel directly
+        channelFailures++;
+      }
+    } catch (err) {
+      console.error(`Lockdown channel error in #${channel.name}:`, err);
+      channelFailures++;
+    }
+  }
+
+  let roleLevelApplied = false;
+
+  // Fallback: ROLE-LEVEL lockdown if some channels could not be updated
+  if (channelFailures > 0) {
+    try {
+      // Remove SendMessages from @everyone
+      let basePerms = new PermissionsBitField(everyone.permissions);
+      if (basePerms.has(PermissionsBitField.Flags.SendMessages)) {
+        basePerms = basePerms.remove(PermissionsBitField.Flags.SendMessages);
+        await everyone.setPermissions(basePerms);
+      }
+
+      // Ensure whitelisted roles KEEP SendMessages
       for (const id of ROLE_WHITELIST) {
-        channel.permissionOverwrites
-          .edit(id, {
-            SendMessages: true,
-          })
-          .catch(() => {});
+        const role = guild.roles.cache.get(id);
+        if (!role) continue;
+
+        let perms = new PermissionsBitField(role.permissions);
+        if (!perms.has(PermissionsBitField.Flags.SendMessages)) {
+          perms = perms.add(PermissionsBitField.Flags.SendMessages);
+          await role.setPermissions(perms);
+        }
       }
 
-      if (channel.type === ChannelType.GuildText) {
-        await channel.setRateLimitPerUser(
-          SECURITY_CONFIG.raid.lockdownSlowmodeSeconds
-        );
-      }
-    } catch {
-      // ignore
+      roleLevelApplied = true;
+
+      log?.send(
+        `⚠️ **Lockdown Fallback Activated**\n` +
+          `Some channels could not be updated individually.\n` +
+          `Applied **role-level lockdown** via @everyone permissions.\n` +
+          `Channels skipped or errored: **${channelFailures}**`
+      );
+    } catch (err) {
+      console.error("Role-level lockdown error:", err);
+      log?.send(
+        `❌ **Lockdown Fallback Failed**\n` +
+          `Bot could not apply role-level lockdown.\n` +
+          `Check my role permissions (Manage Roles & Manage Channels).`
+      );
     }
   }
 
   raidLockdowns.set(guild.id, true);
-  log?.send(`🔒 **Lockdown Enabled**\nReason: ${reason}`);
+
+  log?.send(
+    `🔒 **Lockdown Enabled**\n` +
+      `Reason: ${reason}\n` +
+      (channelFailures > 0
+        ? `Channels with issues: **${channelFailures}**\nRole-level fallback: **${
+            roleLevelApplied ? "ENABLED" : "NOT APPLIED"
+          }**`
+        : "All channels updated successfully.")
+  );
 }
 
 async function disableLockdown(guild, reason = "Manual unlock") {
   const log = getLogChannel(guild);
   const everyone = guild.roles.everyone;
 
+  // Remove channel-specific lockdown
   for (const [, channel] of guild.channels.cache) {
-    if (!channel.manageable || !channel.isTextBased()) continue;
+    if (!channel.isTextBased() || !channel.manageable) continue;
 
     try {
       await channel.permissionOverwrites.edit(everyone, {
@@ -460,9 +524,20 @@ async function disableLockdown(guild, reason = "Manual unlock") {
       if (channel.type === ChannelType.GuildText) {
         await channel.setRateLimitPerUser(0);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error(`Unlock channel error in #${channel.name}:`, err);
     }
+  }
+
+  // Reverse role-level fallback: restore SendMessages to @everyone if removed
+  try {
+    let basePerms = new PermissionsBitField(everyone.permissions);
+    if (!basePerms.has(PermissionsBitField.Flags.SendMessages)) {
+      basePerms = basePerms.add(PermissionsBitField.Flags.SendMessages);
+      await everyone.setPermissions(basePerms);
+    }
+  } catch (err) {
+    console.error("Role-level unlock error:", err);
   }
 
   raidLockdowns.set(guild.id, false);
@@ -637,8 +712,6 @@ async function getAuditExecutor(guild, type, targetId) {
 }
 
 // ---------- SLASH COMMAND DEFINITIONS ----------
-// NOTE: setDMPermission(false) = no DMs
-// setDefaultMemberPermissions = hides from members without those perms
 const commands = [
   // Core moderation/bans
   new SlashCommandBuilder()
@@ -1386,25 +1459,34 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (commandName === "lockdown") {
+      // Prevent "application did not respond" by deferring first
+      await interaction.deferReply({ ephemeral: true });
+
       await enableLockdown(
         guild,
         `Manual /lockdown by ${member.user.tag}`
       );
-      await interaction.reply({
-        content: "🔒 Lockdown enabled. Only whitelisted roles can speak.",
-        ephemeral: true,
+
+      await interaction.editReply({
+        content:
+          "🔒 Lockdown enabled.\n" +
+          "- Most channels locked.\n" +
+          "- Whitelisted roles can still speak.\n" +
+          "- Check the security log for any fallback details.",
       });
       return;
     }
 
     if (commandName === "unlockdown") {
+      await interaction.deferReply({ ephemeral: true });
+
       await disableLockdown(
         guild,
         `Manual /unlockdown by ${member.user.tag}`
       );
-      await interaction.reply({
+
+      await interaction.editReply({
         content: "✅ Lockdown disabled. Chat restored.",
-        ephemeral: true,
       });
       return;
     }
@@ -1526,6 +1608,8 @@ client.on("interactionCreate", async (interaction) => {
 
     // /panic with 5-minute cooldown
     if (commandName === "panic") {
+      await interaction.deferReply({ ephemeral: true });
+
       const now = Date.now();
       const elapsed = now - lastPanicTimestamp;
 
@@ -1534,11 +1618,10 @@ client.on("interactionCreate", async (interaction) => {
         const minutes = Math.floor(remaining / 60000);
         const seconds = Math.floor((remaining % 60000) / 1000);
 
-        await interaction.reply({
+        await interaction.editReply({
           content:
             `❌ Panic mode is on cooldown.\n` +
             `Try again in **${minutes}m ${seconds}s**.`,
-          ephemeral: true,
         });
 
         logChannel?.send(
@@ -1585,14 +1668,13 @@ client.on("interactionCreate", async (interaction) => {
           `Cooldown: 5 minutes`
       );
 
-      await interaction.reply({
+      await interaction.editReply({
         content:
           "🚨 PANIC mode activated:\n" +
           "- Lockdown ON\n" +
           "- Non-whitelisted webhooks removed\n" +
           "- 5-minute global cooldown applied\n" +
           "Check logs for more details.",
-        ephemeral: true,
       });
       return;
     }
@@ -1666,11 +1748,16 @@ client.on("interactionCreate", async (interaction) => {
         `Error: \`${err.message}\``
     );
 
-    if (!interaction.replied) {
+    if (!interaction.replied && !interaction.deferred) {
       await interaction.reply({
         content:
           "❌ An unexpected error occurred while running that command.",
         ephemeral: true,
+      });
+    } else if (interaction.deferred && !interaction.replied) {
+      await interaction.editReply({
+        content:
+          "❌ An unexpected error occurred while running that command.",
       });
     }
   }
